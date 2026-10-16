@@ -1,0 +1,7 @@
+node_modules
+dist
+src-tauri/target
+src-tauri/gen
+.DS_Store
+# scratch workspace for `npm run dev` in a browser
+dev-workspace

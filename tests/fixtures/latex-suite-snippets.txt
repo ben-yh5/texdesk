@@ -1,0 +1,30 @@
+[
+    // Math mode
+	{trigger: "mk", replacement: "$$0$", options: "tA"},
+	{trigger: "dm", replacement: "$$$0$$", options: "tAw"},
+	{trigger: "beg", replacement: "\\begin{$0}$1\\end{$0}", options: "mA"},
+
+    // Code
+    {trigger: "cdpy", replacement: "```python\n$0\n```", options: "tAw"},
+    {trigger: "ex", replacement: ">[!example]- ", options: "tw"},
+    {trigger: "draw", replacement:"\\draw[$0] $1;\n$2", options:"cA"},
+
+	{trigger: "sr", replacement: "^{2}", options: "mA"},
+	{trigger: "lim", replacement: "\\lim_{ ${0:n} \\to ${1:\\infty} } $2", options: "mA"},
+	{trigger: /([A-Za-z])(\d)/, replacement: "[[0]]_{[[1]]}", options: "rmA", description: "Auto letter subscript", priority: -1},
+	{trigger: "([^\\\\])(${GREEK})", replacement: "[[0]]\\[[1]]", options: "rmA"},
+	{trigger: "\\\\(${GREEK})([A-Za-z])", replacement: "\\[[0]] [[1]]", options: "rmA"},
+	{trigger: "\\sum", replacement: "\\sum_{${0:i}=${1:1}}^{${2:N}} $3", options: "m"},
+	{trigger: "U", replacement: "\\underbrace{ ${VISUAL} }_{ $0 }", options: "mA"},
+	{trigger: "tayl", replacement: "${0:f}(${1:x}) + ${0:f}'(${1:x})", options: "mA"},
+	{trigger: "pmat", replacement: "\\begin{pmatrix}\n$0\n\\end{pmatrix}", options: "MA"},
+	{trigger: "pmat", replacement: "\\begin{pmatrix}$0\\end{pmatrix}", options: "nA"},
+	{trigger: "money", replacement: "pay $x then $0", options: "tA"},
+    // {trigger: "--", replacement: "–", options: "tA"},
+	{trigger: /iden(\d)/, replacement: (match) => {
+		const n = match[1];
+		let rows = [];
+		for (let j = 0; j < n; j++) rows.push(Array.from({ length: n }, (_, i) => (i === j ? 1 : 0)).join(" & "));
+		return "\\begin{pmatrix}" + rows.join(" \\\\ ") + "\\end{pmatrix}$0";
+	}, options: "mA", description: "identity"},
+]

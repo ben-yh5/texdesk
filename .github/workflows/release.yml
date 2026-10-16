@@ -1,0 +1,43 @@
+name: Release
+
+# Push a tag like v0.1.0-preview.1 to build the macOS app and attach it to a draft
+# pre-release. Review the draft on GitHub, then publish it.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm test
+      # Unsigned: macOS asks you to approve it on first launch (see the README).
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: TeXdesk ${{ github.ref_name }}
+          releaseBody: |
+            A preview build of TeXdesk for macOS (Apple Silicon and Intel). It isn't signed yet:
+            after moving TeXdesk.app to Applications, run
+            `xattr -dr com.apple.quarantine /Applications/TeXdesk.app` once, or open it with
+            right-click → Open. Requires Tectonic (`brew install tectonic`).
+          releaseDraft: true
+          prerelease: true
+          args: --target universal-apple-darwin --bundles app,dmg
