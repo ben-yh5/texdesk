@@ -4,10 +4,9 @@
 // While the editor has focus, a ghost caret marks where Tab would land and ↵ where jump
 // out would.
 //
-// Jump labels: hold ⌥ and every enclosing block's `\end` gets a number, innermost first;
-// ⌥1…⌥9 jumps onto a new line after that one (⌥1 is the same as jump out).
+// Holding ⌥ for numbered jumps (which include leaving these blocks) is in targets.ts.
 
-import { EditorSelection, EditorState, Range, StateEffect, StateField } from "@codemirror/state";
+import { EditorSelection, EditorState, Range } from "@codemirror/state";
 import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate, WidgetType } from "@codemirror/view";
 import { contextAt } from "../scanner/field";
 import { taboutTarget } from "./tabout";
@@ -165,8 +164,13 @@ export function jumpOutLevel(view: EditorView, level: number): boolean {
   const sel = state.selection.main;
   if (!sel.empty || state.selection.ranges.length > 1) return false;
   const s = blockLevels(state, sel.head, level)[level - 1];
-  if (!s) return false;
+  return s ? leaveBlock(view, s) : false;
+}
 
+/** Jumps onto a new line after block `s` (one of the blocks around the cursor). */
+export function leaveBlock(view: EditorView, s: Scope): boolean {
+  const state = view.state;
+  const sel = state.selection.main;
   // Always a new line right after the `\end`, indented like it.
   const end = state.doc.lineAt(s.to);
   const indent = /^\s*/.exec(end.text)![0];
@@ -205,16 +209,6 @@ class GlyphWidget extends WidgetType {
   ignoreEvent() { return true; }
 }
 
-const setLabels = StateEffect.define<boolean>();
-/** Whether the jump labels are showing (⌥ held). */
-const labelsShown = StateField.define<boolean>({
-  create: () => false,
-  update(v, tr) {
-    for (const e of tr.effects) if (e.is(setLabels)) v = e.value;
-    return v;
-  },
-});
-
 const tabGhost = Decoration.widget({ widget: new GlyphWidget("cm-tab-ghost", ""), side: 1 });
 const landing = Decoration.widget({ widget: new GlyphWidget("cm-jumpout-landing", "↵"), side: 1 });
 const EMPTY_ITEM = /^\s*\\item(\[[^\]]*\])?\s*$/;
@@ -234,14 +228,8 @@ function decorate(view: EditorView): DecorationSet {
   const decos: Range<Decoration>[] = [];
   const tab = tabLanding(state, sel.head);
   if (tab !== null && tab !== sel.head) decos.push(tabGhost.range(tab));
-  if (state.field(labelsShown, false)) {
-    blockLevels(state, sel.head).forEach((s, i) => {
-      decos.push(Decoration.widget({ widget: new GlyphWidget("cm-jump-label", String(i + 1)), side: 1 + i }).range(state.doc.lineAt(s.to).to));
-    });
-  } else {
-    const block = blockScopeAt(state, sel.head);
-    if (block) decos.push(landing.range(state.doc.lineAt(block.to).to));
-  }
+  const block = blockScopeAt(state, sel.head);
+  if (block) decos.push(landing.range(state.doc.lineAt(block.to).to));
   return Decoration.set(decos, true);
 }
 
@@ -249,35 +237,9 @@ const markerPlugin = ViewPlugin.fromClass(class {
   decorations: DecorationSet;
   constructor(readonly view: EditorView) { this.decorations = decorate(view); }
   update(u: ViewUpdate) {
-    if (u.docChanged || u.selectionSet || u.focusChanged || u.viewportChanged || u.transactions.some((t) => t.effects.length)) {
-      this.decorations = decorate(u.view);
-    }
+    if (u.docChanged || u.selectionSet || u.focusChanged || u.viewportChanged) this.decorations = decorate(u.view);
   }
-  show(on: boolean) {
-    if (this.view.state.field(labelsShown, false) !== on) this.view.dispatch({ effects: setLabels.of(on) });
-  }
-}, {
-  decorations: (p) => p.decorations,
-  eventHandlers: {
-    keydown(e) {
-      if (e.key === "Alt") {
-        if (!e.repeat && !e.metaKey && !e.ctrlKey && !e.shiftKey) this.show(true);
-        return false;
-      }
-      const digit = /^Digit([1-9])$/.exec(e.code);
-      if (digit && e.altKey && !e.metaKey && !e.ctrlKey) {
-        e.preventDefault();
-        this.show(false);
-        jumpOutLevel(this.view, Number(digit[1]));
-        return true;
-      }
-      this.show(false);
-      return false;
-    },
-    keyup(e) { if (e.key === "Alt") this.show(false); },
-    blur() { this.show(false); },
-  },
-});
+}, { decorations: (p) => p.decorations });
 
 const markerTheme = EditorView.baseTheme({
   // A zero-width ghost caret, so marking the spot never shifts the text.
@@ -286,20 +248,8 @@ const markerTheme = EditorView.baseTheme({
     content: '""', position: "absolute", left: "-1px", top: "0", bottom: "0", width: "2px", borderRadius: "1px",
     backgroundColor: "var(--td-accent, #4a6cf7)", opacity: "0.55",
   },
-  ".cm-jump-label": {
-    display: "inline-block", marginLeft: "0.4em", padding: "0 0.4em", borderRadius: "4px", fontFamily: "var(--td-ui, system-ui)",
-    fontSize: "0.75em", fontWeight: "600", lineHeight: "1.5", color: "#fff", backgroundColor: "var(--td-accent, #4a6cf7)",
-    pointerEvents: "none", userSelect: "none", verticalAlign: "1px",
-  },
-  "&.cm-jump-labels-on .cm-tooltip": { visibility: "hidden" },
   ".cm-jumpout-landing": { color: "var(--td-accent, #4a6cf7)", opacity: "0.6", marginLeft: "0.4em", pointerEvents: "none", userSelect: "none" },
 });
 
-/** Shows where Tab and jump out would land, and the ⌥ jump labels. */
-export const jumpOutMarker = [
-  labelsShown,
-  // Popups (the math preview) would cover labels; hide them while the labels show.
-  EditorView.editorAttributes.compute([labelsShown], (state) => (state.field(labelsShown) ? { class: "cm-jump-labels-on" } : ({} as Record<string, string>))),
-  markerPlugin,
-  markerTheme,
-];
+/** Shows where Tab and jump out would land. */
+export const jumpOutMarker = [markerPlugin, markerTheme];

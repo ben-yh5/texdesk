@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { undo } from "@codemirror/commands";
-import { blockLevels, jumpOut, jumpOutLevel, jumpOutMarker, scopeAt, tabLanding } from "../src/editor/jumpout";
+import { blockLevels, jumpOut, jumpOutLevel, scopeAt, tabLanding } from "../src/editor/jumpout";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { scanField } from "../src/scanner/field";
@@ -90,23 +90,5 @@ describe("jump out", () => {
     jumpOutLevel(v, 2);
     expect(show(v)).toBe(hw.replace("1|", "1").replace("    \\end{itemize}\n", "    \\end{itemize}\n    |\n"));
     expect(jumpOutLevel(editor(hw, none()), 4)).toBe(false);
-  });
-
-  it("pressing ⌥ shows numbered labels; ⌥2 jumps; letting go hides them", () => {
-    const c = hw.indexOf("|");
-    const view = new EditorView({
-      state: EditorState.create({ doc: hw.replace("|", ""), selection: { anchor: c }, extensions: [scanField, jumpOutMarker] }),
-      parent: document.body,
-    });
-    view.focus();
-    const key = (type: string, init: KeyboardEventInit) => view.contentDOM.dispatchEvent(new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init }));
-    const labels = () => [...view.contentDOM.querySelectorAll(".cm-jump-label")].map((e) => e.textContent);
-    key("keydown", { key: "Alt", code: "AltLeft", altKey: true });
-    expect(labels()).toEqual(["1", "2", "3"]);
-    key("keyup", { key: "Alt", code: "AltLeft" });
-    expect(labels()).toEqual([]);
-    key("keydown", { key: "™", code: "Digit2", altKey: true });
-    expect(view.state.doc.lineAt(view.state.selection.main.head).number).toBe(9);
-    view.destroy();
   });
 });

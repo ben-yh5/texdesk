@@ -5,3 +5,6 @@ src-tauri/gen
 .DS_Store
 # scratch workspace for `npm run dev` in a browser
 dev-workspace
+
+# personal notes for Claude Code
+CLAUDE.local.md

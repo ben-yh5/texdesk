@@ -31,6 +31,17 @@ describe("vim mode", () => {
     keys(v, ["u"]);
     expect(v.state.doc.toString()).toBe("one two three");
   });
+  it("⌥+digit numbered jumps work in normal and insert mode", () => {
+    const v = ed("Some $x$ text here.\nNext line.");
+    const alt = (code: string) => v.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "¡", code, altKey: true, bubbles: true, cancelable: true }));
+    alt("Digit1"); // normal mode, from the start: after $x$
+    expect(v.state.selection.main.head).toBe(8);
+    expect(v.state.doc.toString()).toBe("Some $x$ text here.\nNext line.");
+    keys(v, ["i"]);
+    alt("Digit1"); // insert mode: the line's end
+    expect(v.state.selection.main.head).toBe(19);
+    expect((getCM(v) as unknown as { state: { vim: { insertMode: boolean } } }).state.vim.insertMode).toBe(true);
+  });
   it(":w saves", () => {
     let saved = 0;
     const v = ed("x", () => saved++);

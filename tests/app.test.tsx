@@ -2376,8 +2376,8 @@ describe("spelling", () => {
     forEachDiagnostic(v.state, (d, from, to) => { if (d.source === "spelling") out.push({ text: v.state.sliceDoc(from, to), actions: d.actions!.map((a) => a.name) }); });
     return out;
   };
-  async function open(misspelled: Record<string, string[]>) {
-    const b = await boot({ ...workspace, [hw]: text }, hw, null, (h) => { h.spelling.misspelled = misspelled; });
+  async function open(misspelled: Record<string, string[]>, corrections: Record<string, string> = {}) {
+    const b = await boot({ ...workspace, [hw]: text }, hw, null, (h) => { h.spelling.misspelled = misspelled; h.spelling.corrections = corrections; });
     await waitFor(() => b.editor()?.state.doc.length);
     return b;
   }
@@ -2411,24 +2411,67 @@ describe("spelling", () => {
     await waitFor(() => spellDiags(v).some((d) => d.text === "teh"));
   });
 
-  it("⌘L fixes the last misspelling before the cursor with its first suggestion, one at a time, each its own undo step", async () => {
-    const b = await open({ probabilty: ["probability", "probabilities"], hihg: ["high"] });
+  const pressIn = (v: EditorView, k: string) => v.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+  const picker = (v: EditorView) => [...v.dom.querySelectorAll(".cm-spellfix-option")].map((e) => e.textContent);
+
+  it("⌘L goes to the last misspelling, numbers its suggestions best first, and a number fixes it and comes back", async () => {
+    const b = await open({ probabilty: ["probabilities", "probability", "probably"], hihg: ["high"] }, { probabilty: "probability" });
     const v = b.editor();
     await waitFor(() => spellDiags(v).length === 2);
     const line = () => v.state.doc.line(3).text;
-    v.dispatch({ selection: { anchor: v.state.doc.line(3).to } }); // after "hihg."
+    const from = v.state.doc.line(3).from;
+    v.dispatch({ selection: { anchor: from + 20 } }); // after "of"
     b.key("l", { metaKey: true });
-    await waitFor(() => line() === "The probabilty of $evnt$ is high.");
-    expect(v.state.selection.main.head).toBe(v.state.doc.line(3).to); // the cursor stays put
-    expect(b.status()).toContain("hihg → high");
-    b.key("l", { metaKey: true });
-    await waitFor(() => line() === "The probability of $evnt$ is high.");
-    b.key("l", { metaKey: true });
-    await waitFor(() => b.status().includes("No misspellings before the cursor"));
-    undo(v);
-    expect(line()).toBe("The probabilty of $evnt$ is high.");
+    await waitFor(() => picker(v).length === 3);
+    expect(v.state.selection.main.head).toBe(from + 4); // at the word, not changed yet
+    expect(line()).toBe("The probabilty of $evnt$ is hihg.");
+    expect(v.dom.querySelector(".cm-spellfix-word")?.textContent).toBe("probabilty");
+    expect(picker(v)).toEqual(["1probability", "2probabilities", "3probably"]); // the autocorrection first
+    pressIn(v, "3");
+    expect(line()).toBe("The probably of $evnt$ is hihg.");
+    expect(v.state.selection.main.head).toBe(from + 18); // back after "of"
+    expect(v.dom.querySelector(".cm-spellfix-word")).toBeNull();
     undo(v);
     expect(line()).toBe("The probabilty of $evnt$ is hihg.");
+  });
+
+  it("⌘L again goes to the one before, and a pick still comes back to where you started", async () => {
+    const b = await open({ probabilty: ["probability"], hihg: ["high", "hip"] });
+    const v = b.editor();
+    await waitFor(() => spellDiags(v).length === 2);
+    const end = v.state.doc.line(3).to;
+    v.dispatch({ selection: { anchor: end } }); // after "hihg."
+    b.key("l", { metaKey: true });
+    await waitFor(() => v.dom.querySelector(".cm-spellfix-word")?.textContent === "hihg");
+    expect(picker(v)).toEqual(["1high", "2hip"]);
+    b.key("l", { metaKey: true });
+    await waitFor(() => v.dom.querySelector(".cm-spellfix-word")?.textContent === "probabilty");
+    pressIn(v, "1");
+    expect(v.state.doc.line(3).text).toBe("The probability of $evnt$ is hihg.");
+    expect(v.state.selection.main.head).toBe(v.state.doc.line(3).to);
+    b.key("l", { metaKey: true });
+    await waitFor(() => v.dom.querySelector(".cm-spellfix-word")?.textContent === "hihg");
+    b.key("l", { metaKey: true });
+    await waitFor(() => b.status().includes("No misspellings before the cursor"));
+  });
+
+  it("Esc puts the cursor back without a change; another key leaves it at the word", async () => {
+    const b = await open({ hihg: ["high"] });
+    const v = b.editor();
+    await waitFor(() => spellDiags(v).length === 1);
+    const end = v.state.doc.line(3).to;
+    v.dispatch({ selection: { anchor: end } });
+    b.key("l", { metaKey: true });
+    await waitFor(() => v.dom.querySelector(".cm-spellfix-word"));
+    pressIn(v, "Escape");
+    expect(v.state.selection.main.head).toBe(end);
+    expect(v.dom.querySelector(".cm-spellfix-word")).toBeNull();
+    b.key("l", { metaKey: true });
+    await waitFor(() => v.dom.querySelector(".cm-spellfix-word"));
+    pressIn(v, "ArrowRight");
+    expect(v.dom.querySelector(".cm-spellfix-word")).toBeNull();
+    pressIn(v, "1"); // picker gone: not a pick
+    expect(v.state.doc.line(3).text).toBe("The probabilty of $evnt$ is hihg.");
   });
 
   it("⌘L only looks before the cursor (or the word it's in)", async () => {
@@ -2438,8 +2481,10 @@ describe("spelling", () => {
     const from = v.state.doc.line(3).from;
     v.dispatch({ selection: { anchor: from + 8 } }); // inside "probabilty"
     b.key("l", { metaKey: true });
-    await waitFor(() => v.state.doc.line(3).text === "The probability of $evnt$ is hihg.");
-    expect(v.state.selection.main.head).toBe(from + 4 + "probability".length);
+    await waitFor(() => v.dom.querySelector(".cm-spellfix-word")?.textContent === "probabilty");
+    pressIn(v, "1");
+    expect(v.state.doc.line(3).text).toBe("The probability of $evnt$ is hihg.");
+    expect(v.state.selection.main.head).toBe(from + 4 + "probability".length); // was inside it: after it
   });
 
   it("a suggestion replaces the word; Add to dictionary keeps it out of later checks", async () => {
@@ -2467,7 +2512,9 @@ describe("spelling", () => {
     const v = b.editor();
     v.dispatch({ selection: { anchor: v.state.doc.line(3).to } });
     b.key("l", { metaKey: true });
-    await waitFor(() => v.state.doc.line(3).text.endsWith("is high."));
+    await waitFor(() => picker(v).length === 1);
+    pressIn(v, "1");
+    expect(v.state.doc.line(3).text.endsWith("is high.")).toBe(true);
   });
 });
 

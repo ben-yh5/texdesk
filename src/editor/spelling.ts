@@ -108,3 +108,11 @@ export function wordsToCheck(words: WordAt[], dictionary: Set<string>): string[]
 export function parseDictionary(text: string): Set<string> {
   return new Set(text.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")));
 }
+
+/**
+ * A misspelling's suggestions, best first: what macOS would autocorrect it to (when it's
+ * confident), then its guesses.
+ */
+export function rankSuggestions(suggestions: string[], correction?: string | null): string[] {
+  return correction ? [correction, ...suggestions.filter((s) => s !== correction)] : suggestions;
+}

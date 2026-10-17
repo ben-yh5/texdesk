@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseDictionary, proseWords, wordsToCheck } from "../src/editor/spelling";
+import { parseDictionary, proseWords, rankSuggestions, wordsToCheck } from "../src/editor/spelling";
+import { indentColumns } from "../src/editor/wrapindent";
 
 const words = (text: string) => proseWords(text).map((w) => w.word);
 
@@ -32,5 +33,20 @@ describe("prose words", () => {
   it("asks about each word once, minus the dictionary", () => {
     const dict = parseDictionary("# mine\nTectonic\nsynctex\n\n");
     expect(wordsToCheck(proseWords("tectonic Tectonic synctex SyncTeX foo foo"), dict)).toEqual(["foo"]);
+  });
+
+  it("ranks the autocorrection first", () => {
+    expect(rankSuggestions(["teh", "the", "ten"], "the")).toEqual(["the", "teh", "ten"]);
+    expect(rankSuggestions(["the", "ten"], "tea")).toEqual(["tea", "the", "ten"]);
+    expect(rankSuggestions(["the", "ten"], null)).toEqual(["the", "ten"]);
+  });
+});
+
+describe("wrapped-line indent", () => {
+  it("counts the leading whitespace in columns", () => {
+    expect(indentColumns("    \\item x", 4)).toBe(4);
+    expect(indentColumns("\t  x", 4)).toBe(6);
+    expect(indentColumns("  \tx", 4)).toBe(4);
+    expect(indentColumns("x  ", 4)).toBe(0);
   });
 });

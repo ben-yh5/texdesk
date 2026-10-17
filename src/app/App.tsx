@@ -10,7 +10,8 @@ import { extractMacros, mathMacros, setMacros } from "../editor/mathpreview";
 import { extractEnvironments, setUserEnvironments } from "../editor/latexcomplete";
 import { insertFigure, saveFigure } from "../editor/images";
 import { openFind } from "../editor/search";
-import { parseDictionary, proseWords, wordsToCheck } from "../editor/spelling";
+import { parseDictionary, proseWords, rankSuggestions, wordsToCheck } from "../editor/spelling";
+import { MAX_OPTIONS, openSpellFix, showSpellFix } from "../editor/spellfix";
 import { formatKey, matchesKey, toAccelerator } from "./keys";
 import { convertLatexSuite } from "../convert/latexSuite";
 import { contextAt } from "../scanner/field";
@@ -1975,8 +1976,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   // ---- spelling ---------------------------------------------------------------------
   //
   // The prose of the open .tex file is checked as you type (the macOS spellchecker), and
-  // misspellings are underlined. ⌘L fixes the last one before the cursor with the first
-  // suggestion, like Gilles Castel's Vim mapping (inoremap <C-l> <c-g>u<Esc>[s1z=`]a<c-g>u).
+  // misspellings are underlined. ⌘L goes to the last one before the cursor and numbers its
+  // suggestions (1–6 picks one and comes back), after Gilles Castel's Vim mapping (inoremap <C-l> <c-g>u<Esc>[s1z=`]a<c-g>u).
 
   /** Misspelled words (→ suggestions) in a file, from its last spellcheck. */
   const [spelling, setSpelling] = createSignal<{ file: string; misses: Map<string, string[]> } | null>(null);
@@ -2020,7 +2021,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       try { misses = await host.checkSpelling(unknown); } catch { return null; }
       if (misses === null) return null;
       for (const w of unknown) spellCache.set(w, null);
-      for (const m of misses) spellCache.set(m.word, m.suggestions);
+      for (const m of misses) spellCache.set(m.word, rankSuggestions(m.suggestions, m.correction));
     }
     if (path() !== p || view !== v) return null;
     const dict = await readDictionary();
@@ -2055,9 +2056,9 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   createEffect(on(() => config().editor.spellcheck, () => scheduleSpellcheck(0), { defer: true }));
 
   /**
-   * ⌘L: replaces the last misspelling before the cursor (or the one it's in) with its first
-   * suggestion, as its own undo step, and leaves the cursor where it was. Press again for the
-   * one before that.
+   * ⌘L: moves the cursor to the last misspelling before it (or the one it's in) and shows its
+   * suggestions, best first: 1–6 replaces the word and puts the cursor back where it was (one
+   * undo step), Esc goes back without a change. Press ⌘L again for the misspelling before that.
    */
   async function fixPreviousMisspelling() {
     const p = path();
@@ -2067,24 +2068,17 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     const v = view;
     if (!v || path() !== p) return;
     const misses = spelling()?.misses ?? new Map<string, string[]>();
+    const open = openSpellFix(v);
     const head = v.state.selection.main.head;
     const before = proseWords(v.state.doc.toString()).filter((w) => misses.has(w.word) && w.from < head);
-    const w = [...before].reverse().find((x) => misses.get(x.word)!.length);
-    if (!w) {
-      say(before.length ? `No suggestions for “${before[before.length - 1].word}” — hover it to add it to the dictionary` : "No misspellings before the cursor", !!before.length);
-      return;
-    }
-    const fix = misses.get(w.word)![0];
-    const cursor = head >= w.to ? head + fix.length - (w.to - w.from) : w.from + fix.length;
+    const w = before[before.length - 1];
+    if (!w) { say("No misspellings before the cursor"); return; }
     v.dispatch({
-      changes: { from: w.from, to: w.to, insert: fix },
-      selection: EditorSelection.cursor(cursor),
-      annotations: isolateHistory.of("full"),
-      userEvent: "input.spelling",
+      selection: EditorSelection.cursor(w.from),
+      effects: showSpellFix.of({ from: w.from, to: w.to, word: w.word, options: misses.get(w.word)!.slice(0, MAX_OPTIONS), home: open?.home ?? head }),
       scrollIntoView: true,
     });
     v.focus();
-    say(`${w.word} → ${fix}`);
   }
 
   /** Replaces a line with a fix, if the line is still what it was. */

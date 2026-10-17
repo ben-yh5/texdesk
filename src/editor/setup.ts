@@ -20,6 +20,9 @@ import type { SnippetRuntime } from "../snippets/runtime";
 import type { EditorSettings } from "../workspace/config";
 import { defaultConfig } from "../workspace/config";
 import { macrosCompartment, mathMacros, mathPreview } from "./mathpreview";
+import { spellFix } from "./spellfix";
+import { numberedJumps } from "./targets";
+import { wrapIndent } from "./wrapindent";
 
 const highlight = HighlightStyle.define([
   { tag: [t.keyword, t.tagName], color: "var(--td-hl-keyword)" },
@@ -67,6 +70,12 @@ const theme = EditorView.theme({
   ".cm-searchMatch": { backgroundColor: "var(--td-match)", outline: "none" },
   ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "var(--td-selection)", outline: "1px solid var(--td-accent)" },
   ".cm-lintRange.cm-spell": { backgroundImage: "none", textDecoration: "underline wavy var(--td-error)", textDecorationSkipInk: "none", textUnderlineOffset: "3px" },
+  // ⌘L's fix, and the other suggestions to swap in with 1–4.
+  ".cm-spellfix-word": { backgroundColor: "var(--td-match)", borderRadius: "2px" },
+  ".cm-tooltip.cm-spellfix": { display: "flex", gap: "10px", padding: "3px 8px", fontFamily: "var(--td-mono)", fontSize: "12px" },
+  ".cm-spellfix-option": { cursor: "pointer", whiteSpace: "nowrap" },
+  ".cm-spellfix-option:hover": { color: "var(--td-accent)" },
+  ".cm-spellfix kbd": { color: "var(--td-muted)", marginRight: "4px", fontFamily: "inherit" },
 });
 
 export interface EditorOptions {
@@ -128,7 +137,7 @@ export function settingsExtension(s: EditorSettings, tex: boolean): Extension {
     // First, so its keys take precedence over every other keymap.
     s.vim ? vim({ status: true }) : [],
     s.lineNumbers ? (s.relativeLineNumbers ? relativeLineNumbers : lineNumbers()) : [],
-    s.lineWrapping ? EditorView.lineWrapping : [],
+    s.lineWrapping ? [EditorView.lineWrapping, wrapIndent] : [],
     EditorView.theme({
       ".cm-scroller": { fontSize: `${s.fontSize}px`, ...(s.fontFamily ? { fontFamily: `${JSON.stringify(s.fontFamily)}, var(--td-mono)` } : {}) },
     }),
@@ -168,7 +177,9 @@ export function editorState(o: EditorOptions): EditorState {
       linkCompletion, o.linkCandidates ? linkCandidates.of(o.linkCandidates) : [],
       snippetExtension(o.runtime),
       jumpOutMarker,
+      numberedJumps,
       sectionFolding,
+      spellFix,
       links, o.onOpenLink ? openLink.of(o.onOpenLink) : [],
     );
   }
