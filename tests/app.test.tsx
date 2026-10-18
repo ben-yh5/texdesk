@@ -1138,6 +1138,8 @@ describe("Phase 6: settings", () => {
   it("there's no build command or setting: documents build on their own, and ⌘S on an unchanged one rebuilds it", async () => {
     const b = await boot(workspace, `${WS}/Fa30/1-CS101/hw/hw1.tex`);
     await waitFor(() => b.editor()?.state.doc.length);
+    // hw1 has no PDF yet, so opening it builds it; let that build finish before counting builds.
+    await waitFor(() => b.root.querySelector(".buildstatus.build-failed"));
     const calls: string[] = [];
     b.host.compile = async (req) => { calls.push(req.file); return { ok: true, cancelled: false, exitCode: 0, stdout: "", stderr: "", durationMs: 1, pdf: null, launchError: null }; };
     b.key("k", { metaKey: true, shiftKey: true });
