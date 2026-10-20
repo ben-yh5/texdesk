@@ -25,7 +25,7 @@ import { spellFix } from "./spellfix";
 import { numberedJumps } from "./targets";
 import { wrapIndent } from "./wrapindent";
 
-const highlight = HighlightStyle.define([
+export const highlight = HighlightStyle.define([
   { tag: [t.keyword, t.tagName], color: "var(--td-hl-keyword)" },
   { tag: [t.atom, t.bracket], color: "var(--td-hl-bracket)" },
   { tag: [t.variableName, t.typeName], color: "var(--td-hl-variable)" },
@@ -34,7 +34,7 @@ const highlight = HighlightStyle.define([
   { tag: t.invalid, color: "var(--td-hl-error)" },
 ]);
 
-const theme = EditorView.theme({
+export const theme = EditorView.theme({
   "&": { height: "100%", backgroundColor: "var(--td-bg)", color: "var(--td-fg)" },
   ".cm-scroller": { fontFamily: "var(--td-editor-font, var(--td-mono))", fontSize: "var(--td-editor-size, 14.5px)", lineHeight: "1.6" },
   ".cm-content": { caretColor: "var(--td-accent)", padding: "16px 0", maxWidth: "860px" },

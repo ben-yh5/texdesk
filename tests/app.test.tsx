@@ -1111,6 +1111,53 @@ describe("Phase 6: settings", () => {
     expect(b.status()).not.toContain("Settings reloaded");
   });
 
+  it("a key TeXdesk wasn't allowed to read from the Keychain turns AI off until Settings asks again", async () => {
+    const b = await boot(workspace, hw);
+    await waitFor(() => b.editor()?.state.doc.length);
+    Object.assign(b.host.ai, { key: "sk-ant-x", denied: true });
+    await b.command("Settings");
+    (await waitFor(() => [...b.root.querySelectorAll<HTMLElement>(".set-nav-item")].find((x) => x.textContent === "AI"))).click();
+    const row = await waitFor(() => [...b.root.querySelectorAll(".set-row")].find((r) => r.querySelector(".set-label")?.textContent === "Anthropic API key") as HTMLElement);
+    const error = await waitFor(() => row.querySelector(".set-error"));
+    expect(error.textContent).toContain("wasn't allowed to read the saved key");
+    expect(b.host.ai.retries).toBe(0);
+    b.host.ai.denied = false; // Allow, this time
+    [...row.querySelectorAll<HTMLElement>("button")].find((x) => x.textContent === "Allow Keychain access")!.click();
+    await waitFor(() => row.querySelector(".set-desc")?.textContent?.includes("A key is saved."));
+    expect(b.host.ai.retries).toBe(1);
+    expect(row.querySelector(".set-error")).toBeNull();
+  });
+
+  it("New diagram puts a centered picture in the diagram editor, which works without Claude after a Keychain Deny", async () => {
+    const b = await boot(workspace, hw);
+    await waitFor(() => b.editor()?.state.doc.length);
+    Object.assign(b.host.ai, { key: "sk-ant-x", denied: true });
+    b.editor()!.dispatch({ selection: { anchor: b.editor()!.state.doc.length } });
+    await b.command("New diagram");
+    const dg = await waitFor(() => b.root.querySelector<HTMLElement>(".dg"));
+    expect(b.editor()!.state.doc.toString()).toMatch(/\\begin\{center\}\n  \\begin\{tikzpicture\}\n  \\end\{tikzpicture\}\n\\end\{center\}$/);
+    // The code is in a CodeMirror editor, and the drawing tools are still there.
+    await waitFor(() => dg.querySelector(".dg-code .cm-content")?.textContent?.includes("\\begin{tikzpicture}"));
+    expect(dg.querySelectorAll(".dg-tool").length).toBe(6);
+    const off = await waitFor(() => dg.querySelector(".dg-ai-key"));
+    expect(off.textContent).toContain("Claude is off");
+    expect(dg.querySelector(".dg-ask")).toBeNull();
+    // Checking again doesn't ask the Keychain; only the button does.
+    await settle(1700);
+    expect(b.host.ai.retries).toBe(0);
+    b.host.ai.denied = false;
+    [...off.querySelectorAll<HTMLElement>("button")].find((x) => x.textContent === "Allow Keychain access")!.click();
+    await waitFor(() => dg.querySelector(".dg-ask"));
+    expect(b.host.ai.retries).toBe(1);
+    // Typing in the code goes back into the file with Done.
+    const code = EditorView.findFromDOM(dg.querySelector<HTMLElement>(".dg-code .cm-editor")!)!;
+    const at = code.state.doc.toString().indexOf("\\end{tikzpicture}");
+    code.dispatch({ changes: { from: at, insert: "\\draw (0,0) -- (1,1);\n" }, userEvent: "input" });
+    [...dg.querySelectorAll<HTMLElement>("button")].find((x) => x.textContent === "Done")!.click();
+    await waitFor(() => !b.root.querySelector(".dg"));
+    expect(b.editor()!.state.doc.toString()).toContain("\\begin{tikzpicture}\n  \\draw (0,0) -- (1,1);\n\\end{tikzpicture}");
+  });
+
   it("Hotkeys: click a shortcut, press the new keys, and it's live", async () => {
     const b = await boot(workspace, `${WS}/Fa30/1-CS101/hw/hw1.tex`);
     await waitFor(() => pdfPane(b.root));

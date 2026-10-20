@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { readImage, readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tauri-apps/api/menu";
 import { rgbaToPng } from "./png";
-import type { CompileResult, DirEntry, FileTimes, Host, MenuEntry, Misspelling, WalkEntry } from "./types";
+import type { AiKeyStatus, CompileResult, DirEntry, FileTimes, Host, MenuEntry, Misspelling, WalkEntry } from "./types";
 
 const NATIVE = {
   cut: "Cut", copy: "Copy", paste: "Paste", selectAll: "SelectAll", services: "Services", hide: "Hide", hideOthers: "HideOthers",
@@ -77,7 +77,7 @@ export function tauriHost(): Host {
     sha256: (path) => invoke<string | null>("file_sha256", { path }),
     fileTimes: (paths) => invoke<(FileTimes | null)[]>("file_times", { paths }),
     checkSpelling: (words) => invoke<Misspelling[] | null>("check_spelling", { words }),
-    aiHasKey: () => invoke<boolean>("ai_has_key"),
+    aiKeyStatus: (retry = false) => invoke<AiKeyStatus>("ai_key_status", { retry }),
     aiSetKey: (key) => invoke<void>("ai_set_key", { key }),
     aiMessages: (body) => invoke<unknown>("ai_messages", { body }),
     copyFile: (src, dest) => invoke<void>("copy_file", { src, dest }),

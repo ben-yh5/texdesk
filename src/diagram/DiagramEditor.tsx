@@ -6,7 +6,13 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-import type { Host } from "../host/types";
+import { EditorState, Transaction } from "@codemirror/state";
+import { EditorView, drawSelection, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { bracketMatching, syntaxHighlighting } from "@codemirror/language";
+import { latexLanguage } from "../editor/codeblocks";
+import { highlight, theme } from "../editor/setup";
+import type { AiKeyStatus, Host } from "../host/types";
 import type { AiSettings } from "../workspace/config";
 import { DiagramBuild, DiagramError, buildDiagram } from "./build";
 import { Usage, askClaude } from "./ai";
@@ -82,16 +88,18 @@ export function DiagramEditor(props: DiagramEditorProps) {
   const [request, setRequest] = createSignal("");
   const [aiStatus, setAiStatus] = createSignal<string | null>(null);
   const [aiBusy, setAiBusy] = createSignal(false);
-  const [hasKey, setHasKey] = createSignal(true);
+  /** Null until checked; "denied": TeXdesk wasn't allowed to read the key, so Claude is off. */
+  const [keyStatus, setKeyStatus] = createSignal<AiKeyStatus | null>(null);
   const [total, setTotal] = createSignal<Usage>({ input: 0, output: 0 });
   let canvas!: HTMLCanvasElement;
   let stage!: HTMLDivElement;
   let pdfData: ArrayBuffer | null = null;
 
-  // Checked again while there's none, so a key added in Settings meanwhile is picked up.
-  const checkKey = () => props.host.aiHasKey().then(setHasKey, () => setHasKey(false));
+  // Checked again until there's a key, so one added or allowed in Settings meanwhile is picked up
+  // (after a Deny this doesn't ask the Keychain again; only `retry` does).
+  const checkKey = (retry = false) => props.host.aiKeyStatus(retry).then(setKeyStatus, () => setKeyStatus("none"));
   void checkKey();
-  const keyTimer = setInterval(() => { if (!hasKey()) void checkKey(); }, 1500);
+  const keyTimer = setInterval(() => { if (keyStatus() !== "saved") void checkKey(); }, 1500);
   onCleanup(() => clearInterval(keyTimer));
 
   /** Changes the picture as one undo step. */
@@ -336,7 +344,8 @@ export function DiagramEditor(props: DiagramEditorProps) {
 
   // ---- keys ----
 
-  const typing = (e: KeyboardEvent) => e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement;
+  const typing = (e: KeyboardEvent) =>
+    e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement || (e.target instanceof Element && !!e.target.closest(".cm-editor"));
   function onKey(e: KeyboardEvent) {
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.key === "Enter") { e.preventDefault(); props.onDone(src()); return; }
@@ -358,11 +367,42 @@ export function DiagramEditor(props: DiagramEditorProps) {
     if (t) { e.preventDefault(); setTool(t.id); }
   }
   let dialog!: HTMLDivElement;
+  let code!: HTMLDivElement;
   onMount(() => {
     // Take the keys from the text editor (it keeps focus when a snippet or its hover button opens this).
     dialog.focus();
     window.addEventListener("keydown", onKey);
     onCleanup(() => window.removeEventListener("keydown", onKey));
+
+    // The code, highlighted like the main editor. Typing there is one undo step for the picture
+    // (taken when it gets focus); its own history only undoes typing, not the canvas's changes.
+    const view = new EditorView({
+      parent: code,
+      state: EditorState.create({
+        doc: src(),
+        extensions: [
+          lineNumbers(), history(), drawSelection(), highlightActiveLine(), bracketMatching(), latexLanguage, syntaxHighlighting(highlight), theme,
+          EditorView.theme({ ".cm-scroller": { fontSize: "12.5px", lineHeight: "1.55" }, ".cm-content": { padding: "10px 0" } }),
+          EditorView.contentAttributes.of({ "aria-label": "TikZ code", spellcheck: "false" }),
+          keymap.of([...defaultKeymap, ...historyKeymap]),
+          EditorView.domEventHandlers({
+            focus: () => { undoStack.push(src()); },
+            blur: () => { if (undoStack[undoStack.length - 1] === src()) undoStack.pop(); },
+          }),
+          EditorView.updateListener.of((u) => {
+            const text = u.state.doc.toString();
+            if (u.docChanged && text !== src()) { redoStack.length = 0; setSrc(text); }
+          }),
+        ],
+      }),
+    });
+    createEffect(() => {
+      const s = src();
+      if (s !== view.state.doc.toString()) {
+        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: s }, annotations: Transaction.addToHistory.of(false) });
+      }
+    });
+    onCleanup(() => view.destroy());
   });
 
   // ---- Claude ----
@@ -412,7 +452,7 @@ export function DiagramEditor(props: DiagramEditorProps) {
         setAiStatus(`Done · ${tokens}`);
       } else {
         setAiStatus(`${res.error ?? "No answer"}${res.usage.input ? ` · ${tokens}` : ""}`);
-        if (res.error && /API key/i.test(res.error)) setHasKey(false);
+        if (res.error && /API key/i.test(res.error)) void checkKey();
       }
     } finally {
       setAiBusy(false);
@@ -437,6 +477,7 @@ export function DiagramEditor(props: DiagramEditorProps) {
     <div class="dg-backdrop">
       <div class="dg" role="dialog" aria-label="Diagram editor" tabIndex={-1} ref={dialog}>
         <div class="dg-bar">
+          <span class="dg-title">Diagram</span>
           <div class="dg-tools" role="toolbar" aria-label="Tools">
             <For each={TOOLS}>
               {(t) => (
@@ -446,10 +487,15 @@ export function DiagramEditor(props: DiagramEditorProps) {
           </div>
           <span class="dg-status">{building() ? "Building…" : !live() && shown() ? "Updating…" : ""}</span>
           <span class="ov-spacer" />
-          <button onClick={undo} title="Undo (⌘Z)">Undo</button>
-          <button onClick={redo} title="Redo (⇧⌘Z)">Redo</button>
-          <button onClick={props.onCancel}>Cancel</button>
-          <button class="primary" onClick={() => props.onDone(src())} title="Put the picture in the file (⌘↩)">Done</button>
+          <button class="tb-btn" onClick={undo} title="Undo (⌘Z)" aria-label="Undo">
+            <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 3.5 2.5 6.5l3 3" /><path d="M2.5 6.5h7a4 4 0 0 1 0 8H7" /></svg>
+          </button>
+          <button class="tb-btn" onClick={redo} title="Redo (⇧⌘Z)" aria-label="Redo">
+            <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="m10.5 3.5 3 3-3 3" /><path d="M13.5 6.5h-7a4 4 0 0 0 0 8H9" /></svg>
+          </button>
+          <span class="dg-sep" />
+          <button class="dg-btn" onClick={props.onCancel}>Cancel</button>
+          <button class="dg-btn primary" onClick={() => props.onDone(src())} title="Put the picture in the file (⌘↩)">Done</button>
         </div>
         <div class="dg-main">
           <div class="dg-canvas-wrap">
@@ -517,12 +563,7 @@ export function DiagramEditor(props: DiagramEditorProps) {
             </Show>
           </div>
           <div class="dg-side">
-            <textarea
-              class="dg-code" spellcheck={false} value={src()} aria-label="TikZ code"
-              onFocus={() => undoStack.push(src())}
-              onInput={(e) => { redoStack.length = 0; setSrc(e.currentTarget.value); }}
-              onBlur={() => { if (undoStack[undoStack.length - 1] === src()) undoStack.pop(); }}
-            />
+            <div class="dg-code" ref={code} />
             <Show when={errors().length}>
               <div class="dg-errors">
                 <For each={errors().slice(0, 4)}>{(e) => <div class="dg-error">{lineNote(e)}{e.message}</div>}</For>
@@ -532,8 +573,15 @@ export function DiagramEditor(props: DiagramEditorProps) {
         </div>
         <div class="dg-ai">
           <Show
-            when={hasKey()}
-            fallback={<div class="dg-ai-key">To ask Claude, add your Anthropic API key in Settings → AI. <button class="set-link" onClick={props.onOpenAiSettings}>Open Settings</button></div>}
+            when={keyStatus() !== "none" && keyStatus() !== "denied"}
+            fallback={
+              <Show
+                when={keyStatus() === "denied"}
+                fallback={<div class="dg-ai-key">To ask Claude, add your Anthropic API key in Settings → AI. <button class="set-link" onClick={props.onOpenAiSettings}>Open Settings</button></div>}
+              >
+                <div class="dg-ai-key">Claude is off: TeXdesk wasn't allowed to read your API key from the Keychain. <button class="set-link" onClick={() => void checkKey(true)}>Allow Keychain access</button></div>
+              </Show>
+            }
           >
             <textarea
               class="dg-ask" rows={2} value={request()} disabled={aiBusy()} spellcheck={false}
@@ -546,7 +594,7 @@ export function DiagramEditor(props: DiagramEditorProps) {
               <Show when={total().input}>
                 <span class="dg-ai-total">This session: {total().input.toLocaleString()} in, {total().output.toLocaleString()} out</span>
               </Show>
-              <button class="primary" disabled={aiBusy() || !request().trim()} onClick={() => void ask()}>{aiBusy() ? "Working…" : "Ask Claude"}</button>
+              <button class="dg-btn primary" disabled={aiBusy() || !request().trim()} onClick={() => void ask()}>{aiBusy() ? "Working…" : "Ask Claude"}</button>
             </div>
           </Show>
         </div>

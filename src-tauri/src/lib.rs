@@ -388,7 +388,7 @@ pub fn run() {
             read_text, write_text, create_text, path_exists, home_dir, read_dir, mkdir_all, list_files, watch_dir, watch_tree, unwatch,
             initial_file, pick_file, pick_folder, pick_save_pdf, trash_path, move_path, open_external, read_binary, read_gzip_text, create_binary,
             compile::compile, compile::cancel_compile, compile::file_sha256, compile::copy_file, spelling::check_spelling, file_times,
-            ai::ai_has_key, ai::ai_set_key, ai::ai_messages
+            ai::ai_key_status, ai::ai_set_key, ai::ai_messages
         ])
         .setup(|app| {
             if let Some(w) = app.get_webview_window("main") {

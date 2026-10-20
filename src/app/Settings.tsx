@@ -6,6 +6,7 @@
 
 import { For, JSX, Show, createSignal, onCleanup } from "solid-js";
 import { CommandId, DEFAULT_KEYS, Raw, WorkspaceConfig, defaultConfig, hasSettingKey } from "../workspace/config";
+import type { AiKeyStatus } from "../host/types";
 import { formatKey, isMac } from "./keys";
 import { PluginsPane, PluginsPaneProps } from "./PluginsPane";
 import { WorkspacePane, WorkspacePaneProps } from "./WorkspacePane";
@@ -121,7 +122,7 @@ export interface SettingsProps {
   /** Saves one setting (undefined removes it: the workspace goes back to the global value, the global one to the default). */
   onChange: (scope: SettingsScope, table: string, key: string, value: unknown) => void;
   /** The Anthropic API key, kept in the Keychain (not in any settings file). */
-  aiKey: { has(): Promise<boolean>; set(key: string): Promise<void> };
+  aiKey: { status(retry?: boolean): Promise<AiKeyStatus>; set(key: string): Promise<void> };
   /** Commands with a configurable shortcut, for the Hotkeys section. */
   commands: { id: CommandId; label: string }[];
   /** Section to open at. */
@@ -340,11 +341,12 @@ export function SettingsView(props: SettingsProps) {
 
 /** The API key: saved straight to the Keychain, never shown again once saved. */
 function AiKeyRow(props: { aiKey: SettingsProps["aiKey"] }) {
-  const [has, setHas] = createSignal<boolean | null>(null);
+  const [status, setStatus] = createSignal<AiKeyStatus | null>(null);
   const [value, setValue] = createSignal("");
   const [error, setError] = createSignal<string | null>(null);
-  const refresh = () => props.aiKey.has().then(setHas, () => setHas(false));
+  const refresh = (retry = false) => props.aiKey.status(retry).then(setStatus, () => setStatus("none"));
   void refresh();
+  const has = () => status() === "saved";
   const save = async (key: string) => {
     setError(null);
     try { await props.aiKey.set(key); setValue(""); } catch (err) { setError(String(err).replace(/^Error: /, "")); }
@@ -356,13 +358,19 @@ function AiKeyRow(props: { aiKey: SettingsProps["aiKey"] }) {
         <div class="set-label">Anthropic API key</div>
         <div class="set-desc">
           Your own key, from console.anthropic.com. It's kept in the macOS Keychain, not in settings.json, and only sent to the Claude API.
-          {has() ? " A key is saved." : has() === false ? " No key saved yet." : ""}
+          {has() ? " A key is saved." : status() === "none" ? " No key saved yet." : ""}
         </div>
+        <Show when={status() === "denied"}>
+          <div class="set-error">
+            TeXdesk wasn't allowed to read the saved key from the Keychain, so AI features are off.{" "}
+            <button class="set-link" onClick={() => void refresh(true)}>Allow Keychain access</button>
+          </div>
+        </Show>
         <Show when={error()}>{(e) => <div class="set-error">{e()}</div>}</Show>
       </div>
       <div class="set-control">
         <input
-          class="set-input" type="password" placeholder={has() ? "Replace the saved key" : "sk-ant-…"} value={value()} spellcheck={false} autocomplete="off"
+          class="set-input" type="password" placeholder={has() || status() === "denied" ? "Replace the saved key" : "sk-ant-…"} value={value()} spellcheck={false} autocomplete="off"
           onInput={(e) => setValue(e.currentTarget.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && value().trim()) void save(value()); }}
         />

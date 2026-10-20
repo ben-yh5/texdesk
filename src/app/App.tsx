@@ -2373,8 +2373,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       const line = view.state.doc.lineAt(at);
       const indent = /^\s*/.exec(line.text)![0];
       const lead = line.text.trim() ? `\n${indent}` : "";
-      const insert = `${lead}\\begin{tikzpicture}\n${indent}\\end{tikzpicture}`;
-      view.dispatch({ changes: { from: at, insert }, selection: { anchor: at + lead.length + 1 }, annotations: isolateHistory.of("full"), userEvent: "input" });
+      const insert = `${lead}\\begin{center}\n${indent}  \\begin{tikzpicture}\n${indent}  \\end{tikzpicture}\n${indent}\\end{center}`;
+      view.dispatch({ changes: { from: at, insert }, selection: { anchor: at + insert.indexOf("\\begin{tikzpicture}") + 1 }, annotations: isolateHistory.of("full"), userEvent: "input" });
     }
     const doc = view.state.doc.toString();
     const span = pictureAt(doc, o.at ?? view.state.selection.main.head);
@@ -3674,7 +3674,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
             canSaveGlobal={() => !!globalRoot}
             initialSection={section()}
             onChange={(scope, table, key, value) => void saveSetting(scope, table, key, value)}
-            aiKey={{ has: () => host.aiHasKey(), set: (k) => host.aiSetKey(k) }}
+            aiKey={{ status: (retry) => host.aiKeyStatus(retry), set: (k) => host.aiSetKey(k) }}
             commands={commands.filter((c) => c.key).map((c) => ({ id: c.key!, label: c.label }))}
             plugins={{
               plugins,

@@ -294,7 +294,7 @@ describe("plugins", () => {
     rt.onCommand = (c) => ran.push(c);
     const v = editor("text\n  tikz|", rt);
     type(v, " ");
-    expect(show(v)).toBe("text\n  \\begin{tikzpicture}\n    |\n  \\end{tikzpicture}");
+    expect(show(v)).toBe("text\n  \\begin{center}\n    \\begin{tikzpicture}\n      |\n    \\end{tikzpicture}\n  \\end{center}");
     expect(ran).toEqual([]); // not inside the keystroke's update
     await Promise.resolve();
     expect(ran).toEqual(["edit_diagram"]);

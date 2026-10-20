@@ -62,7 +62,7 @@ export function devHost(): Host {
     // The browser has no spellchecker to ask.
     checkSpelling: async () => null,
     // The API key lives in the macOS Keychain, which only the desktop app reaches.
-    aiHasKey: async () => false,
+    aiKeyStatus: async () => "none",
     aiSetKey: async () => { throw new Error("AI features need the desktop app"); },
     aiMessages: async () => { throw new Error("AI features need the desktop app"); },
     copyFile: (src, dest) => call<void>("copy", { src, dest }),

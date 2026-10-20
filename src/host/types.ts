@@ -97,13 +97,18 @@ export interface Host {
   fileTimes(paths: string[]): Promise<(FileTimes | null)[]>;
   /** The misspelled words among `words`, with suggestions; null if there's no spellchecker. */
   checkSpelling(words: string[]): Promise<Misspelling[] | null>;
-  /** Whether an Anthropic API key is saved (in the macOS Keychain). */
-  aiHasKey(): Promise<boolean>;
+  /**
+   * Whether an Anthropic API key is saved (in the macOS Keychain); "denied" when TeXdesk wasn't
+   * allowed to read it. `retry` asks the Keychain again after that.
+   */
+  aiKeyStatus(retry?: boolean): Promise<AiKeyStatus>;
   /** Saves the API key; "" removes it. */
   aiSetKey(key: string): Promise<void>;
   /** Sends a Claude Messages API request (the body as the API takes it) with the saved key. */
   aiMessages(body: unknown): Promise<unknown>;
 }
+
+export type AiKeyStatus = "saved" | "none" | "denied";
 
 export interface FileTimes {
   created: number;
