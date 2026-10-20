@@ -542,3 +542,40 @@ body.resizing .pdf-pane, body.resizing .editor { pointer-events: none; }
 .ov-hint { color: var(--td-muted); font-size: 11px; margin-top: 18px; }
 .status-crumb { background: none; border: none; padding: 0; font: inherit; color: inherit; cursor: pointer; }
 .status-crumb:hover { color: var(--td-accent); text-decoration: underline; }
+
+/* Diagram editor */
+.dg-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.28); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 9; }
+.dg { display: flex; flex-direction: column; width: min(1200px, 100%); height: min(820px, 100%); background: var(--td-bg); border: 1px solid var(--td-border); border-radius: 12px; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.3); overflow: hidden; font-family: var(--td-ui); font-size: 13px; color: var(--td-fg); }
+.dg:focus { outline: none; }
+.dg-bar { display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: var(--td-bar); border-bottom: 1px solid var(--td-border); }
+.dg-tools { display: flex; gap: 2px; }
+.dg-tool { border: 1px solid transparent; background: transparent; padding: 4px 9px; border-radius: 6px; }
+.dg-tool.active { background: var(--td-selection); border-color: var(--td-accent); }
+.dg-status { color: var(--td-muted); font-size: 12px; margin-left: 8px; }
+.dg-main { flex: 1; min-height: 0; display: flex; }
+.dg-canvas-wrap { flex: 1; min-width: 0; position: relative; display: flex; align-items: center; justify-content: center; overflow: auto; background: var(--td-pdf-bg, #e9e9e6); }
+.dg-stage { position: relative; line-height: 0; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15); touch-action: none; }
+.dg-stage.tool-node, .dg-stage.tool-line, .dg-stage.tool-arrow, .dg-stage.tool-rectangle, .dg-stage.tool-circle { cursor: crosshair; }
+.dg-canvas { display: block; background: white; }
+.dg-box { position: absolute; border: 1px dashed transparent; border-radius: 3px; box-sizing: border-box; }
+.dg-box.movable { cursor: move; }
+.dg-stage:hover .dg-box { border-color: rgba(74, 108, 247, 0.35); }
+.dg-box.selected { border: 1.5px solid var(--td-accent); background: rgba(74, 108, 247, 0.06); }
+.dg-box.fixed.selected { border-style: dashed; }
+.dg-point { position: absolute; width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; border: 1.5px solid var(--td-accent); background: white; opacity: 0.55; cursor: move; }
+.dg-point.selected, .dg-point:hover { opacity: 1; }
+.dg-preview { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.dg-preview rect, .dg-preview circle, .dg-preview line { fill: none; stroke: var(--td-accent); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.dg-text { position: absolute; z-index: 1; min-width: 160px; padding: 4px 7px; border: 1px solid var(--td-accent); border-radius: 5px; background: var(--td-bg); color: var(--td-fg); font: 13px var(--td-mono); line-height: normal; outline: none; }
+.dg-empty { position: absolute; color: var(--td-muted); }
+.dg-side { width: 38%; max-width: 460px; flex: none; display: flex; flex-direction: column; border-left: 1px solid var(--td-border); }
+.dg-code { flex: 1; resize: none; border: none; outline: none; padding: 10px 12px; background: var(--td-bg); color: var(--td-fg); font: 12.5px/1.5 var(--td-mono); white-space: pre; }
+.dg-errors { border-top: 1px solid var(--td-border); padding: 8px 12px; max-height: 30%; overflow: auto; }
+.dg-error { color: var(--td-error); font-size: 12px; padding: 2px 0; }
+.dg-ai { border-top: 1px solid var(--td-border); padding: 10px; display: grid; gap: 6px; }
+.dg-ask { width: 100%; box-sizing: border-box; resize: none; padding: 7px 9px; border: 1px solid var(--td-border); border-radius: 7px; background: var(--td-bg); color: var(--td-fg); font: inherit; outline: none; }
+.dg-ask:focus { border-color: var(--td-accent); }
+.dg-ai-foot { display: flex; align-items: center; gap: 12px; }
+.dg-ai-status { color: var(--td-muted); font-size: 12px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dg-ai-total { color: var(--td-muted); font-size: 12px; }
+.dg-ai-key { color: var(--td-muted); }

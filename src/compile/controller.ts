@@ -140,6 +140,11 @@ export class BuildController {
     return true;
   }
 
+  /** The folders a build of `source` searches (for building part of it on its own). */
+  async searchPaths(source: string): Promise<string[]> {
+    return (await this.paths(source)).searchPaths;
+  }
+
   private async paths(source: string) {
     const ctx = await this.context(source);
     const cfg = ctx.config;

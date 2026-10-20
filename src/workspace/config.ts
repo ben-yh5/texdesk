@@ -8,7 +8,7 @@ import { Host, join } from "../host/types";
 export type CommandId =
   | "find_file" | "find_in_files" | "command_palette" | "open_folder" | "open_file" | "toggle_sidebar" | "toggle_pdf"
   | "show_in_pdf" | "paste_as_code" | "paste_image" | "toggle_math_preview" | "follow_link" | "insert_link"
-  | "settings" | "close_tab" | "split_right" | "new_file" | "bracket_size" | "fix_spelling" | "jump_out" | "folder_overview";
+  | "settings" | "close_tab" | "split_right" | "new_file" | "bracket_size" | "fix_spelling" | "jump_out" | "folder_overview" | "edit_diagram";
 
 export const DEFAULT_KEYS: Record<CommandId, string> = {
   find_file: "Mod-k",
@@ -32,6 +32,7 @@ export const DEFAULT_KEYS: Record<CommandId, string> = {
   fix_spelling: "Mod-l",
   split_right: "Mod-Alt-\\",
   folder_overview: "Mod-Alt-o",
+  edit_diagram: "Mod-Shift-d",
 };
 
 export interface EditorSettings {
@@ -63,6 +64,12 @@ export interface BuildSettings {
   autoCompileDelayMs: number;
 }
 
+/** The diagram editor's Claude requests (the API key itself is in the Keychain, not here). */
+export interface AiSettings {
+  model: string;
+  effort: "low" | "medium" | "high";
+}
+
 /** Commands that no longer exist; a keys entry for one is ignored rather than an error. */
 const REMOVED_COMMANDS = new Set(["compile", "add_problem"]);
 /** Commands that were renamed: old name → new. */
@@ -88,6 +95,7 @@ export interface WorkspaceConfig {
   tectonic: string | null;
   editor: EditorSettings;
   build: BuildSettings;
+  ai: AiSettings;
   /** Command → key (CodeMirror key syntax, e.g. "Mod-Shift-b"; "" disables). */
   keys: Record<CommandId, string>;
   /** Plugin id → on/off; plugins not listed use their default (yours on, built-in off). */
@@ -106,6 +114,7 @@ export const defaultConfig: WorkspaceConfig = {
   tectonic: null,
   editor: { theme: "system", fontSize: 14.5, fontFamily: "", lineNumbers: true, relativeLineNumbers: false, lineWrapping: true, mathPreview: true, spellcheck: true, followEdits: true, autoPairBrackets: true, autoEnlargeBrackets: true, vim: false },
   build: { debounceMs: 300, autoCompileDelayMs: 500 },
+  ai: { model: "claude-haiku-5-5", effort: "low" },
   keys: DEFAULT_KEYS,
   plugins: {},
 };
@@ -196,6 +205,19 @@ export function applySettings(base: WorkspaceConfig, raw: Raw, errors: string[],
       debounceMs: typed<number>(b, "debounce_ms", "number", "build") ?? out.build.debounceMs,
       autoCompileDelayMs: typed<number>(b, "auto_compile_delay_ms", "number", "build") ?? out.build.autoCompileDelayMs,
     };
+  }
+
+  const a = table("ai");
+  if (a) {
+    const ai = { ...out.ai };
+    const model = typed<string>(a, "model", "string", "ai");
+    if (model) ai.model = model;
+    const effort = typed<string>(a, "effort", "string", "ai");
+    if (effort !== undefined) {
+      if (effort === "low" || effort === "medium" || effort === "high") ai.effort = effort;
+      else errors.push(`${where}: ai.effort must be "low", "medium" or "high"`);
+    }
+    out.ai = ai;
   }
 
   const k = table("keys");

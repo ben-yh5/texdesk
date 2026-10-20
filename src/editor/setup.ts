@@ -8,6 +8,7 @@ import { codeBlocks, latexLanguage } from "./codeblocks";
 import { linter, lintGutter } from "@codemirror/lint";
 import { Vim, vim } from "@replit/codemirror-vim";
 import { links, openLink } from "./links";
+import { diagramHover, editDiagramAt } from "../diagram/hover";
 import { brackets } from "./brackets";
 import { jumpOutMarker } from "./jumpout";
 import { sectionFolding } from "./sections";
@@ -97,6 +98,8 @@ export interface EditorOptions {
   onSave(): void;
   /** ⌘-click on a link in a .tex file. */
   onOpenLink?(ref: LinkRef): void;
+  /** The "Edit diagram" button on a hovered tikzpicture (`pos` is in the picture). */
+  onEditDiagram?(pos: number): void;
   /** Files to suggest inside \\link{…}, \\input{…} etc. */
   linkCandidates?(command: LinkCommand): LinkCandidate[];
   settings?: EditorSettings;
@@ -190,6 +193,7 @@ export function editorState(o: EditorOptions): EditorState {
       sectionFolding,
       spellFix,
       links, o.onOpenLink ? openLink.of(o.onOpenLink) : [],
+      diagramHover, o.onEditDiagram ? editDiagramAt.of(o.onEditDiagram) : [],
     );
   }
   if (o.extra) ext.push(...o.extra);

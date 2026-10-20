@@ -49,6 +49,8 @@ import { jumpOut } from "../editor/jumpout";
 import { foldAll, unfoldAll } from "@codemirror/language";
 import { knownCommandNames } from "../editor/commands";
 import { Fix, RuleFix, ruleFix } from "../compile/fixes";
+import { DiagramEditor } from "../diagram/DiagramEditor";
+import { pictureAt, preambleOf, surroundings } from "../diagram/tikz";
 import { setDiagnostics, type Diagnostic } from "@codemirror/lint";
 import { Workbench, DropTarget, TabLabel } from "./Workbench";
 import { PdfPane, PdfPaneApi } from "./PdfPane";
@@ -361,6 +363,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       },
       onSave: () => void save(),
       onOpenLink: (ref) => void followLink(ref, p),
+      onEditDiagram: (at) => void editDiagram({ at }),
       linkCandidates: (cmd) => linkCandidatesFor(cmd, p),
     });
   }
@@ -2346,6 +2349,65 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     await pasteImageData(png);
   }
 
+  // ---- diagram editor ----------------------------------------------------------------
+
+  /** The picture open in the diagram editor: where it is in its file, and what building it needs. */
+  const [diagram, setDiagram] = createSignal<{
+    file: string; from: number; to: number; picture: string; preamble: string; searchPaths: string[];
+    /** The lines around the picture, for Claude. */
+    context: { before: string; after: string };
+    /** Just inserted, by New diagram or the tikz snippet (Cancel takes it out again). */
+    fresh: boolean;
+  } | null>(null);
+
+  /**
+   * Opens the tikzpicture around the cursor (or `at`) in the diagram editor. `insert` inserts an
+   * empty one first; `inserted`: a snippet just did.
+   */
+  async function editDiagram(o: { insert?: boolean; inserted?: boolean; at?: number } = {}) {
+    const p = path();
+    if (!view || !p || diagram()) return;
+    if (o.insert) {
+      const at = view.state.selection.main.head;
+      const line = view.state.doc.lineAt(at);
+      const indent = /^\s*/.exec(line.text)![0];
+      const lead = line.text.trim() ? `\n${indent}` : "";
+      const insert = `${lead}\\begin{tikzpicture}\n${indent}\\end{tikzpicture}`;
+      view.dispatch({ changes: { from: at, insert }, selection: { anchor: at + lead.length + 1 }, annotations: isolateHistory.of("full"), userEvent: "input" });
+    }
+    const doc = view.state.doc.toString();
+    const span = pictureAt(doc, o.at ?? view.state.selection.main.head);
+    if (!span) { say("Put the cursor in a tikzpicture, or use New diagram", true); return; }
+    const root = await builder.rootFor(p);
+    let preamble = preambleOf(doc);
+    if (root && root !== p) {
+      try { preamble = preambleOf(await host.readText(root)); } catch { /* use this file's */ }
+    }
+    // The root document's folder too, for an \input in its preamble (when the picture is in an included file).
+    const searchPaths = [...(root && root !== p ? [dirname(root)] : []), ...await builder.searchPaths(root ?? p).catch(() => [] as string[])];
+    setDiagram({ file: p, ...span, picture: doc.slice(span.from, span.to), context: surroundings(doc, span), preamble, searchPaths, fresh: !!(o.insert || o.inserted) });
+  }
+
+  // The tikz snippet's picture opens in the diagram editor.
+  runtime.onCommand = (command) => { if (command === "edit_diagram") void editDiagram({ inserted: true }); };
+
+  /** Puts the diagram editor's picture back where it came from (found again if the file changed meanwhile). */
+  function finishDiagram(picture: string) {
+    const d = diagram();
+    setDiagram(null);
+    if (!d || !view || path() !== d.file) { if (d) say("The file with the picture isn't open any more, so the change was dropped", true); return; }
+    const doc = view.state.doc.toString();
+    let { from, to } = d;
+    if (doc.slice(from, to) !== d.picture) {
+      const i = doc.indexOf(d.picture);
+      if (i < 0) { say("The picture changed in the file meanwhile, so the diagram editor's change was dropped", true); return; }
+      from = i;
+      to = i + d.picture.length;
+    }
+    if (picture !== d.picture) view.dispatch({ changes: { from, to, insert: picture }, annotations: isolateHistory.of("full"), userEvent: "input" });
+    view.focus();
+  }
+
   /** ⌘V with an image on the clipboard (e.g. a screenshot) pastes it as a figure. */
   function onPaste(e: ClipboardEvent) {
     if (!isTex()) return;
@@ -2930,6 +2992,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     { id: "jump_out", label: "Jump out", key: "jump_out", run: () => { if (view && !jumpOut(view)) say("Nothing to jump out of here", true); else view?.focus(); }, when: texFile, needs: TEX },
     { id: "paste_as_code", label: "Paste as code", key: "paste_as_code", run: pasteAsCode, when: texFile, needs: TEX },
     { id: "paste_image", label: "Paste image", key: "paste_image", run: pasteImageCommand, when: texFile, needs: TEX },
+    { id: "edit_diagram", label: "Edit diagram", key: "edit_diagram", run: () => editDiagram(), when: texFile, needs: TEX },
+    { id: "new_diagram", label: "New diagram", run: () => editDiagram({ insert: true }), when: texFile, needs: TEX },
     { id: "toggle_math_preview", label: "Toggle math preview", key: "toggle_math_preview", run: toggleMathPreview, when: texFile, needs: TEX },
     { id: "snippet_debug", label: "Snippet debug view", run: toggleDebug, when: texFile, needs: TEX },
     { id: "toggle_sidebar", label: "Toggle sidebar", key: "toggle_sidebar", run: toggleSidebar, when: () => !!root(), needs: OPEN_FOLDER },
@@ -3023,6 +3087,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         { native: "cut" }, { native: "copy" }, { native: "paste" }, { native: "selectAll" }, "separator",
         item("find", "Find…"), item("replace", "Find and Replace…"), "separator",
         item("paste_as_code", "Paste as Code…"), item("paste_image", "Paste Image"), item("insert_link", "Insert Link…"),
+        "separator", item("new_diagram", "New Diagram"), item("edit_diagram", "Edit Diagram…"),
         "separator", item("jump_out", "Jump Out"), item("bracket_size", "Cycle Bracket Size"),
       ] },
       { label: "View", items: [
@@ -3238,6 +3303,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       ["show_in_pdf", showInPdf, () => true],
       ["paste_as_code", pasteAsCode, () => isTex() && !!view?.hasFocus],
       ["paste_image", pasteImageCommand, () => isTex() && !!view?.hasFocus],
+      ["edit_diagram", () => editDiagram(), () => isTex() && !!view?.hasFocus],
       ["toggle_math_preview", toggleMathPreview, () => isTex()],
       ["settings", () => openSettings(), () => true],
       ["close_tab", () => runCommand("close_tab"), () => !!frontTab()],
@@ -3251,7 +3317,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       ["folder_overview", () => runCommand("folder_overview"), () => !!root()],
     ];
     const onKey = (e: KeyboardEvent) => {
-      if (palette.state() || settingsOpen() || tour()) return; // the palette, Settings and the tour handle their own keys
+      // The palette, Settings, the tour and the diagram editor handle their own keys.
+      if (palette.state() || settingsOpen() || tour() || diagram()) return;
       const keys = config().keys;
       for (const [id, fn, ok] of handlers) {
         if (keys[id] && matchesKey(keys[id], e) && ok()) {
@@ -3552,6 +3619,29 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         {(m) => <ContextMenu x={m().x} y={m().y} items={m().items} onClose={() => setCtxMenu(null)} />}
       </Show>
 
+      <Show when={diagram()}>
+        {(d) => (
+          <DiagramEditor
+            host={host}
+            picture={d().picture}
+            preamble={d().preamble}
+            context={d().context}
+            docDir={dirname(d().file)}
+            searchPaths={d().searchPaths}
+            tectonic={config().tectonic}
+            ai={config().ai}
+            onDone={finishDiagram}
+            onCancel={() => {
+              const { fresh, file } = d();
+              setDiagram(null);
+              if (fresh && view && path() === file) undo(view);
+              view?.focus();
+            }}
+            onOpenAiSettings={() => openSettings("ai")}
+          />
+        )}
+      </Show>
+
       <Show when={settingsOpen()}>
         {(section) => (
           <SettingsView
@@ -3561,6 +3651,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
             canSaveGlobal={() => !!globalRoot}
             initialSection={section()}
             onChange={(scope, table, key, value) => void saveSetting(scope, table, key, value)}
+            aiKey={{ has: () => host.aiHasKey(), set: (k) => host.aiSetKey(k) }}
             commands={commands.filter((c) => c.key).map((c) => ({ id: c.key!, label: c.label }))}
             plugins={{
               plugins,

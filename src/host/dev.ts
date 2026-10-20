@@ -61,6 +61,10 @@ export function devHost(): Host {
     fileTimes: (paths) => call("times", { paths }),
     // The browser has no spellchecker to ask.
     checkSpelling: async () => null,
+    // The API key lives in the macOS Keychain, which only the desktop app reaches.
+    aiHasKey: async () => false,
+    aiSetKey: async () => { throw new Error("AI features need the desktop app"); },
+    aiMessages: async () => { throw new Error("AI features need the desktop app"); },
     copyFile: (src, dest) => call<void>("copy", { src, dest }),
     async readBinary(path) {
       const res = await fetch(`/__texdesk/fs/raw?path=${encodeURIComponent(path)}`);

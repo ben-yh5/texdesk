@@ -2253,7 +2253,7 @@ describe("plugins", () => {
       [`${U}/latex-snippets/b.ts`]: 'import { s } from "texdesk"; export default [s("qq", "Q", { auto: true })];',
       [`${U}/latex-snippets/a-functions.ts`]: "export const fn1 = () => 1;",
     });
-    expect([...b.root.querySelectorAll(".plg-row .set-label")].map((x) => x.firstChild!.textContent!.trim())).toEqual(["LaTeX snippets", "Gilles Castel's snippets", "Markdown shortcuts", "Bullet lists", "Matrix & align keys"]);
+    expect([...b.root.querySelectorAll(".plg-row .set-label")].map((x) => x.firstChild!.textContent!.trim())).toEqual(["LaTeX snippets", "Gilles Castel's snippets", "Markdown shortcuts", "Bullet lists", "Matrix & align keys", "TikZ diagrams"]);
     expect((await pluginRow(b, "LaTeX snippets")).textContent).toContain("1 snippet");
     // Open goes to the main file, not a helper that sorts first.
     [...(await pluginRow(b, "LaTeX snippets")).querySelectorAll<HTMLElement>(".plg-links .set-link")].find((x) => x.textContent === "Open")!.click();

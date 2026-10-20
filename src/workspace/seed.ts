@@ -93,6 +93,7 @@ Backslashes are not special to the engine: \`"\\\\$"\` in a JS string is LaTeX's
 | \`visual\` | fire when the trigger is typed over a selection (\`ctx.selection\`) |
 | \`priority\` | higher wins; ties go to the longer match, then definition order |
 | \`description\` | shown in the debug view |
+| \`command\` | an app command to run after expanding: \`"edit_diagram"\` opens the diagram editor on the tikzpicture at the cursor |
 
 Regex triggers are matched against the text before the cursor on the current line and are
 anchored at the cursor automatically.

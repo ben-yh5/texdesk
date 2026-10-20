@@ -65,11 +65,12 @@ describe("settings", () => {
 
   it("reports bad values clearly", async () => {
     const { config, errors } = await load({
-      "/W/.texdesk/workspace.json": wsWith({ editor: { theme: "blue", font_size: "big" }, keys: { bogus: "Mod-x", toggle_pdf: 3 }, plugins: { x: "yes" } }),
+      "/W/.texdesk/workspace.json": wsWith({ editor: { theme: "blue", font_size: "big" }, ai: { effort: "max" }, keys: { bogus: "Mod-x", toggle_pdf: 3 }, plugins: { x: "yes" } }),
     });
     expect(errors).toEqual([
       'workspace.json settings: editor.theme must be "system", "light" or "dark"',
       "workspace.json settings: editor.font_size must be a number",
+      'workspace.json settings: ai.effort must be "low", "medium" or "high"',
       "workspace.json settings: unknown command in keys: bogus",
       "workspace.json settings: keys.toggle_pdf must be a string",
       "workspace.json settings: plugins.x must be true or false",

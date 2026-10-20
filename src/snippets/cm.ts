@@ -43,6 +43,9 @@ function apply(view: EditorView, rt: SnippetRuntime, exp: Expansion | null): boo
     userEvent: "input.snippet",
     scrollIntoView: true,
   });
+  const command = exp.command;
+  // After the current update (this can run inside an input handler).
+  if (command) queueMicrotask(() => rt.onCommand?.(command));
   return true;
 }
 

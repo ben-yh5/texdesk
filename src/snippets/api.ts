@@ -1,6 +1,8 @@
 // Runtime implementation of the `texdesk` module that snippet files import.
 
-import type { KeyHandler, KeyOptions, Replacement, Snippet, SnippetOptions, SnippetResult, Context } from "./types";
+import type { KeyHandler, KeyOptions, Replacement, Snippet, SnippetCommand, SnippetOptions, SnippetResult, Context } from "./types";
+
+const SNIPPET_COMMANDS: readonly SnippetCommand[] = ["edit_diagram"];
 
 export function s(trigger: string | RegExp, replacement: Replacement, options: SnippetOptions = {}): Snippet {
   if (typeof trigger === "string" ? trigger.length === 0 : !(trigger instanceof RegExp)) {
@@ -11,6 +13,9 @@ export function s(trigger: string | RegExp, replacement: Replacement, options: S
   }
   if (options.visual && typeof trigger !== "string") {
     throw new Error(`s(${String(trigger)}): visual snippets need a string trigger`);
+  }
+  if (options.command !== undefined && !SNIPPET_COMMANDS.includes(options.command)) {
+    throw new Error(`s(${String(trigger)}): command must be one of ${SNIPPET_COMMANDS.map((c) => JSON.stringify(c)).join(", ")}`);
   }
   return { kind: "snippet", trigger, replacement, options: { ...options } };
 }

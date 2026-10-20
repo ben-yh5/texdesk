@@ -29,6 +29,7 @@ export interface Setting {
 const ed = <K extends keyof WorkspaceConfig["editor"]>(k: K) => ({ get: (c: WorkspaceConfig) => c.editor[k] as Value });
 const build = <K extends keyof WorkspaceConfig["build"]>(k: K) => ({ get: (c: WorkspaceConfig) => c.build[k] as Value });
 const top = <K extends keyof WorkspaceConfig>(k: K) => ({ get: (c: WorkspaceConfig) => c[k] as Value });
+const ai = <K extends keyof WorkspaceConfig["ai"]>(k: K) => ({ get: (c: WorkspaceConfig) => c.ai[k] as Value });
 
 export const SECTIONS: { id: string; label: string; settings: Setting[] }[] = [
   {
@@ -73,6 +74,18 @@ export const SECTIONS: { id: string; label: string; settings: Setting[] }[] = [
       { table: "", key: "ignore", label: "Hidden files", desc: "Hidden from the file tree and ⌘K. One gitignore pattern per line.", type: "list", ...top("ignore") },
     ],
   },
+  {
+    id: "ai", label: "AI", settings: [
+      {
+        table: "ai", key: "model", label: "Model", desc: "The Claude model the diagram editor asks. Haiku is the cheapest; Sonnet and Opus are better at layout.", type: "select",
+        options: [{ value: "claude-haiku-5-5", label: "Claude Haiku 5.5" }, { value: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" }, { value: "claude-opus-5-5", label: "Claude Opus 5.5" }], ...ai("model"),
+      },
+      {
+        table: "ai", key: "effort", label: "Effort", desc: "How much Claude thinks before answering. Higher is slower and uses more tokens.", type: "select",
+        options: [{ value: "low", label: "Low" }, { value: "medium", label: "Medium" }, { value: "high", label: "High" }], ...ai("effort"),
+      },
+    ],
+  },
 ];
 
 /** Where a change is saved. */
@@ -107,6 +120,8 @@ export interface SettingsProps {
   canSaveGlobal: () => boolean;
   /** Saves one setting (undefined removes it: the workspace goes back to the global value, the global one to the default). */
   onChange: (scope: SettingsScope, table: string, key: string, value: unknown) => void;
+  /** The Anthropic API key, kept in the Keychain (not in any settings file). */
+  aiKey: { has(): Promise<boolean>; set(key: string): Promise<void> };
   /** Commands with a configurable shortcut, for the Hotkeys section. */
   commands: { id: CommandId; label: string }[];
   /** Section to open at. */
@@ -262,6 +277,9 @@ export function SettingsView(props: SettingsProps) {
           <Show when={!canSave() && !special()}>
             <div class="set-note">{scope() === "global" ? "There's no global settings folder, so settings can't be saved." : "This folder isn't set up with TeXdesk, so its settings can't be saved."}</div>
           </Show>
+          <Show when={!filter().trim() && section() === "ai"}>
+            <AiKeyRow aiKey={props.aiKey} />
+          </Show>
           <Show when={!special()}>
             <For each={visible()}>
               {(s) => (
@@ -315,6 +333,41 @@ export function SettingsView(props: SettingsProps) {
             </div>
           </Show>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** The API key: saved straight to the Keychain, never shown again once saved. */
+function AiKeyRow(props: { aiKey: SettingsProps["aiKey"] }) {
+  const [has, setHas] = createSignal<boolean | null>(null);
+  const [value, setValue] = createSignal("");
+  const [error, setError] = createSignal<string | null>(null);
+  const refresh = () => props.aiKey.has().then(setHas, () => setHas(false));
+  void refresh();
+  const save = async (key: string) => {
+    setError(null);
+    try { await props.aiKey.set(key); setValue(""); } catch (err) { setError(String(err).replace(/^Error: /, "")); }
+    await refresh();
+  };
+  return (
+    <div class="set-row">
+      <div class="set-info">
+        <div class="set-label">Anthropic API key</div>
+        <div class="set-desc">
+          Your own key, from console.anthropic.com. It's kept in the macOS Keychain, not in settings.json, and only sent to the Claude API.
+          {has() ? " A key is saved." : has() === false ? " No key saved yet." : ""}
+        </div>
+        <Show when={error()}>{(e) => <div class="set-error">{e()}</div>}</Show>
+      </div>
+      <div class="set-control">
+        <input
+          class="set-input" type="password" placeholder={has() ? "Replace the saved key" : "sk-ant-…"} value={value()} spellcheck={false} autocomplete="off"
+          onInput={(e) => setValue(e.currentTarget.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && value().trim()) void save(value()); }}
+        />
+        <button disabled={!value().trim()} onClick={() => void save(value())}>Save</button>
+        <Show when={has()}><button onClick={() => void save("")}>Remove</button></Show>
       </div>
     </div>
   );

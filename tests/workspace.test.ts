@@ -18,6 +18,7 @@ import { STARTERS, starterById } from "../src/workspace/starters";
 import { BUILTIN_PLUGINS, createPlugin, ensurePluginsFolder, listPlugins, snippetFolders } from "../src/plugins/plugins";
 import { applyGlobalMigration, applyMigration, hasLegacySetup, planGlobalMigration, planMigration } from "../src/workspace/migrate";
 import { editor, fixtureFiles, memoryHost, settle, show, type } from "./helpers";
+import { s as snippet } from "../src/snippets/api";
 import { fuzzyFilter, fuzzyScore } from "../src/workspace/fuzzy";
 import { findTemplate, listTemplates, numberPattern, promptsFor, renderTemplate } from "../src/workspace/templates";
 import { Raw, defaultConfig } from "../src/workspace/config";
@@ -242,6 +243,7 @@ describe("plugins", () => {
       ["markdown-shortcuts", "built-in", false, null],
       ["bullet-lists", "built-in", false, null],
       ["matrix-keys", "built-in", true, null],
+      ["tikz", "built-in", false, null],
     ]);
     expect(list.find((p) => p.id === "latex")!.name).toBe("LaTeX snippets");
     expect(list.find((p) => p.id === "bad")!.error).toMatch(/^plugin\.json: /);
@@ -281,7 +283,30 @@ describe("plugins", () => {
     await watchSnippets(host, snippetFolders(await listPlugins(host, null, null, { "bullet-lists": true })), rt);
     expect(rt.loadErrors).toEqual([]);
     expect(rt.set.snippets.map((e) => e.file)).toEqual(["bullet-lists/bullet-lists.ts"]);
-    expect(BUILTIN_PLUGINS.map((b) => b.id)).toEqual(["castel", "markdown-shortcuts", "bullet-lists", "matrix-keys"]);
+    expect(BUILTIN_PLUGINS.map((b) => b.id)).toEqual(["castel", "markdown-shortcuts", "bullet-lists", "matrix-keys", "tikz"]);
+  });
+
+  it("the TikZ plugin's snippet inserts a picture and then opens the diagram editor", async () => {
+    const rt = new SnippetRuntime();
+    await watchSnippets(memoryHost({}), snippetFolders(await listPlugins(memoryHost({}), null, null, { tikz: true })), rt);
+    expect(rt.loadErrors).toEqual([]);
+    const ran: string[] = [];
+    rt.onCommand = (c) => ran.push(c);
+    const v = editor("text\n  tikz|", rt);
+    type(v, " ");
+    expect(show(v)).toBe("text\n  \\begin{tikzpicture}\n    |\n  \\end{tikzpicture}");
+    expect(ran).toEqual([]); // not inside the keystroke's update
+    await Promise.resolve();
+    expect(ran).toEqual(["edit_diagram"]);
+    // Not inside a word like \\usetikzlibrary.
+    const w = editor("\\usetikz|", rt);
+    type(w, " ");
+    expect(show(w)).not.toContain("tikzpicture");
+  });
+
+  it("a snippet can only run the commands snippets may run", () => {
+    // @ts-expect-error not a snippet command
+    expect(() => snippet("x", "y", { command: "delete_file" })).toThrow('command must be one of "edit_diagram"');
   });
 
   it("a plugins folder gets the shared support files, without overwriting the README", async () => {

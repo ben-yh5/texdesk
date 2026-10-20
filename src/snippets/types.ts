@@ -131,7 +131,12 @@ export interface SnippetOptions {
   /** Higher wins when several snippets match. Default 0. */
   priority?: number;
   description?: string;
+  /** An app command to run once the snippet has expanded: `"edit_diagram"` opens the diagram editor on the tikzpicture at the cursor. */
+  command?: SnippetCommand;
 }
+
+/** The app commands a snippet can run after it expands. */
+export type SnippetCommand = "edit_diagram";
 
 export interface Snippet {
   readonly kind: "snippet";

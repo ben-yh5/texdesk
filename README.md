@@ -11,6 +11,7 @@ A lightweight LaTeX editor for macOS, for writing homework and notes directly in
 - **Workspaces you organize yourself.** Define folder types, templates and overview pages in the app. Nothing about classes or homework is built in, though a *Coursework* starter is included.
 - **Inline math preview** (KaTeX), paste images as figures, Vim mode, search across files, and a LaTeX Suite (Obsidian) snippet importer.
 - **Spellchecking as you type** (the macOS spellchecker, prose only). ⌘L fixes the last misspelling before the cursor.
+- **A diagram editor for TikZ.** ⇧⌘D on a `tikzpicture` (or Edit → New Diagram) opens it built on its own: drag nodes and points, add nodes, lines, arrows, rectangles and circles, edit node text. Changes are written into the TikZ code, snapped to a grid. Optionally, ask Claude to change the picture; it gets the picture, your preamble's TikZ setup and an image of it, and its answer is built (and sent back with the errors if it doesn't compile) before you see it.
 
 ## Install
 
@@ -68,6 +69,7 @@ Push a version tag (for example `git tag v0.1.0-preview.1 && git push --tags`). 
 ## Where things live
 
 - `~/.config/texdesk/settings.json`: your settings, for every workspace.
+- Your Anthropic API key, for asking Claude in the diagram editor: in the macOS Keychain (Settings → AI), never in a settings file. Requests use your own key and account, and only go to `api.anthropic.com`.
 - `~/.config/texdesk/plugins/<id>/`: your snippet plugins (`.ts` files plus a `plugin.json`).
 - `<workspace>/.texdesk/`: a workspace's setup (`workspace.json`), templates and its own plugins.
 - Build output goes in a `.build/` folder next to each `.tex` file.

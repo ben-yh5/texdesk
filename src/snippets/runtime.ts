@@ -2,7 +2,7 @@
 // Editors subscribe to it; the loader replaces its contents on hot reload.
 
 import { emptySet, MatchLog, Reporter, SnippetSet } from "./engine";
-import type { FileInfo } from "./types";
+import type { FileInfo, SnippetCommand } from "./types";
 
 export interface SnippetProblem {
   file: string;
@@ -23,6 +23,8 @@ export class SnippetRuntime implements Reporter {
   fileInfo: FileInfo | null = null;
   /** Number of snippet files loaded successfully. */
   fileCount = 0;
+  /** Runs a fired snippet's `command` (set by the app). */
+  onCommand: ((command: SnippetCommand) => void) | null = null;
   private listeners = new Set<() => void>();
 
   subscribe(fn: () => void): () => void {

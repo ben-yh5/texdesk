@@ -14,6 +14,7 @@ import markdownShortcuts from "./builtin/markdown-shortcuts.ts?raw";
 import bulletLists from "./builtin/bullet-lists.ts?raw";
 import matrixKeys from "./builtin/matrix-keys.ts?raw";
 import castel from "./builtin/castel.ts?raw";
+import tikz from "./builtin/tikz.ts?raw";
 
 import { MANIFEST } from "./manifest";
 export { MANIFEST };
@@ -61,6 +62,11 @@ export const BUILTIN_PLUGINS: { id: string; name: string; description: string; f
     id: "matrix-keys", name: "Matrix & align keys",
     description: "Tab → & and Enter → \\\\ in matrices, cases, align, tabular…",
     files: [{ name: "matrix-keys.ts", code: matrixKeys }],
+  },
+  {
+    id: "tikz", name: "TikZ diagrams",
+    description: "tikz and a space inserts a tikzpicture and opens it in the diagram editor",
+    files: [{ name: "tikz.ts", code: tikz }],
   },
 ];
 

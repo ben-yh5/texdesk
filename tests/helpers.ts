@@ -88,7 +88,9 @@ export function memoryHost(initial: Record<string, string>) {
   const times: Record<string, { created: number; modified: number }> = {};
   /** A stand-in spellchecker: misspelled word → suggestions (null = no spellchecker). */
   const spelling: { misspelled: Record<string, string[]> | null; corrections: Record<string, string>; asked: string[][] } = { misspelled: {}, corrections: {}, asked: [] };
-  const host: Host & { files: typeof files; opened: string[]; trashed: string[]; clipboard: { text: string }; menu: typeof menu; spelling: typeof spelling; times: typeof times; touch(p: string, content?: string | null): void } = {
+  /** A stand-in Claude API: the saved key, the requests sent, and what to answer them with. */
+  const ai: { key: string; requests: unknown[]; respond: (body: unknown) => unknown } = { key: "", requests: [], respond: () => { throw new Error("no AI in tests"); } };
+  const host: Host & { files: typeof files; opened: string[]; trashed: string[]; clipboard: { text: string }; menu: typeof menu; spelling: typeof spelling; times: typeof times; ai: typeof ai; touch(p: string, content?: string | null): void } = {
     kind: "dev",
     files,
     opened,
@@ -97,6 +99,10 @@ export function memoryHost(initial: Record<string, string>) {
     menu,
     spelling,
     times,
+    ai,
+    aiHasKey: async () => !!ai.key,
+    aiSetKey: async (key) => { ai.key = key.trim(); },
+    aiMessages: async (body) => { ai.requests.push(body); return ai.respond(body); },
     readText: async (p) => { const c = files.get(p); if (c === undefined) throw new Error(`ENOENT ${p}`); return c; },
     writeText: async (p, c) => { files.set(p, c); },
     createText: async (p, c) => {

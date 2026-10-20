@@ -8,7 +8,7 @@ import { insideGroup } from "../editor/tabout";
 import { previousExpression } from "./expression";
 import { parseSnippet } from "./snippet-string";
 import type {
-  Context, Doc, Edit, FileInfo, KeyHandler, Line, Mode, ModeOption, Range, Snippet, SnippetResult,
+  Context, Doc, Edit, FileInfo, KeyHandler, Line, Mode, ModeOption, Range, Snippet, SnippetCommand, SnippetResult,
 } from "./types";
 
 export interface SnippetEntry {
@@ -163,6 +163,8 @@ function consumeTrigger(edits: Edit[], trigger: Range): Edit[] {
 export interface Expansion {
   edits: Edit[];
   log: MatchLog;
+  /** The fired snippet's `command`, to run once its edits are applied. */
+  command?: SnippetCommand;
 }
 
 export type TriggerKind =
@@ -239,6 +241,7 @@ export function expandSnippet(
     a.entry.order - b.entry.order);
 
   let result: Edit[] | null = null;
+  let command: SnippetCommand | undefined;
   for (const c of cands) {
     const label = labelOf(c.entry);
     if (result) { log.attempts.push({ label, file: c.entry.file, outcome: "not-reached" }); continue; }
@@ -258,7 +261,7 @@ export function expandSnippet(
       const ms = performance.now() - s0;
       if (ms > SLOW_SNIPPET_MS) rep.slow(label, c.entry.file, ms);
       result = normalize(r, triggerRange);
-      if (result) result = consumeTrigger(result, triggerRange);
+      if (result) { result = consumeTrigger(result, triggerRange); command = c.entry.snippet.options.command; }
       log.attempts.push({ label, file: c.entry.file, outcome: result ? "fired" : "declined", ms });
     } catch (err) {
       rep.error(label, c.entry.file, err);
@@ -267,7 +270,7 @@ export function expandSnippet(
   }
 
   log.totalMs = performance.now() - t0;
-  return { edits: result ?? [], log };
+  return { edits: result ?? [], log, ...(command ? { command } : {}) };
 }
 
 function envMatches(opt: KeyHandler["options"]["env"], stack: readonly string[]): boolean {
