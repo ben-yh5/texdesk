@@ -160,6 +160,20 @@ export function buildOverview(input: OverviewInput): GroupItem {
   return group(input.folder);
 }
 
+/**
+ * The documents in `file`'s folder (relative paths), in the folder's overview order: its .tex
+ * files with a \documentclass (or not read yet). For the PDF pane's ‹ › and its list.
+ */
+export function siblingDocs(input: OverviewInput, file: string): string[] {
+  const dir = parentOf(file);
+  const rel = (n: string) => (dir ? `${dir}/${n}` : n);
+  const names = input.entries
+    .filter((e) => !e.isDir && e.path.endsWith(".tex") && parentOf(e.path) === dir && !nameOf(e.path).startsWith("."))
+    .map((e) => nameOf(e.path))
+    .filter((n) => { const t = input.text(rel(n)); return t === undefined || /^[^%\n]*\\documentclass/m.test(t); });
+  return orderNames(names, input.folders.get(dir) ?? DEFAULT_META, (n) => input.times.get(rel(n))).map(rel);
+}
+
 /** `group` minus items that don't match `keep`; groups with nothing left are dropped. */
 export function filterOverview(group: GroupItem, keep: (d: DocItem) => boolean): GroupItem {
   const items: Item[] = [];

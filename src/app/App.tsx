@@ -34,7 +34,7 @@ import { SearchFile, SearchHit, searchFile, searchFiles } from "../workspace/sea
 import { applyGlobalMigration, applyMigration, describePlan, hasLegacySetup, mergeSettings, planGlobalMigration, planMigration } from "../workspace/migrate";
 import { PaletteView, PickItem, createPalette } from "./Palette";
 import { ALL_KINDS, HeaderLink, Kinds, NewAction, Overview, ResolvedBlock } from "./Overview";
-import { OverviewInput, filesView, folderMetas as metasOf, subfolderRows } from "../workspace/overview";
+import { OverviewInput, filesView, folderMetas as metasOf, siblingDocs, subfolderRows } from "../workspace/overview";
 import { DebugPanel } from "./DebugPanel";
 import { SettingsScope, SettingsView } from "./Settings";
 import { Plugin, createPlugin, ensurePluginsFolder, listPlugins, pluginIdFor, snippetFolders as pluginSnippetFolders, NEW_PLUGIN_FILE } from "../plugins/plugins";
@@ -54,6 +54,7 @@ import { pictureAt, preambleOf, surroundings } from "../diagram/tikz";
 import { setDiagnostics, type Diagnostic } from "@codemirror/lint";
 import { Workbench, DropTarget, TabLabel } from "./Workbench";
 import { PdfPane, PdfPaneApi } from "./PdfPane";
+import { PdfNav } from "./PdfNav";
 import {
   Layout, Tab, TabSpec, activate, activeTab, deserialize, emptyLayout, findSpec, findTab, groupById, keepTab, openPreview, others, place,
   removeTab, renamePaths, resize, retarget, reveal as revealTab, serialize, split, SavedLayout,
@@ -2679,13 +2680,13 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
 
   /** Each folder's overview settings (its own, else its type's), by relative path. */
   const folderMetas = createMemo(() => metasOf(ws()));
-  /** File times (relative path → created/modified), loaded while an overview is open. */
+  /** File times (relative path → created/modified), loaded while an overview or the PDF pane is open. */
   const [fileTimes, setFileTimes] = createSignal<Map<string, FileTimes>>(new Map());
   const overviewOpen = () => layout().groups.some((g) => g.tabs.some((t) => t.kind === "overview"));
 
   async function refreshTimes(list: WalkEntry[], force = false) {
     const r = root();
-    if (!r || (!force && !overviewOpen())) return;
+    if (!r || (!force && !overviewOpen() && !pdfVisible())) return;
     const paths = list.filter((e) => !e.path.split("/").some((x) => x.startsWith(".")));
     const times = await host.fileTimes(paths.map((e) => join(r, e.path)));
     if (root() !== r) return;
@@ -2794,6 +2795,23 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     linkIndex(); // titles come from texCache, which is current whenever the link index is
     return { folder: "", entries: entries(), generated: generated(), folders: folderMetas(), times: fileTimes(), text: (p) => texCache.get(join(r, p)) };
   }
+
+  /** The PDF pane's bar: the shown document's folders (its typed ones, then its own) and the documents next to it. */
+  const pdfNav = createMemo(() => {
+    const src = outputSource();
+    const r = root();
+    if (!src || !r || !src.startsWith(r + "/")) return null;
+    const dir = dirname(src);
+    const typed = scopeFor(r, config(), ws(), dir).folders.filter((f) => f.kind).map((f) => f.path);
+    const folders = dir === r || typed.at(-1) === dir ? typed : [...typed, dir];
+    return {
+      folders: folders.map((d) => ({ label: basename(d), dir: d })),
+      docs: siblingDocs(overviewInput(), relative(r, src)).map((p) => join(r, p)),
+      current: src,
+    };
+  });
+  // The bar's order needs file times: load them when the pane shows.
+  createEffect(on(pdfVisible, (v) => { if (v) void refreshTimes(entries()); }, { defer: true }));
 
   /** A Header block's links from folder `rel`: "./x" is relative to it, anything else to the workspace. */
   function headerLinks(rel: string, links: string[]): HeaderLink[] {
@@ -3503,20 +3521,25 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
           onDblClick={() => { setPdfWidth(clampPdf(pdfDefaultWidth())); prefs.set("pdfWidth", pdfWidth()); }}
         />
         <aside class="pdf-side" style={{ width: `${pdfWidth()}px`, display: pdfVisible() ? "" : "none" }}>
-          <PdfPane
-            host={host}
-            factory={props.viewerFactory ?? pdfjsViewer}
-            pdf={outputPdf()}
-            version={outputVersion()}
-            visible={pdfVisible()}
-            anchors={pdfAnchors}
-            emptyMessage="The PDF shows here once the document builds"
-            onSync={(p, x, y) => void syncFromPdf(p, x, y)}
-            onLink={followPdfLink}
-            onContextMenu={(pt, x, y) => onPdfMenu(null, pt, x, y)}
-            api={(a) => (outputApi = a)}
-            follow={{ on: config().editor.followEdits, toggle: () => void toggleFollowEdits() }}
-          />
+          <Show when={pdfNav()}>
+            {(n) => <PdfNav folders={n().folders} docs={n().docs} current={n().current} onOverview={(d) => void openOverview(d)} onOpen={(p) => void openPath(p)} />}
+          </Show>
+          <div class="pdf-side-body">
+            <PdfPane
+              host={host}
+              factory={props.viewerFactory ?? pdfjsViewer}
+              pdf={outputPdf()}
+              version={outputVersion()}
+              visible={pdfVisible()}
+              anchors={pdfAnchors}
+              emptyMessage="The PDF shows here once the document builds"
+              onSync={(p, x, y) => void syncFromPdf(p, x, y)}
+              onLink={followPdfLink}
+              onContextMenu={(pt, x, y) => onPdfMenu(null, pt, x, y)}
+              api={(a) => (outputApi = a)}
+              follow={{ on: config().editor.followEdits, toggle: () => void toggleFollowEdits() }}
+            />
+          </div>
         </aside>
       </div>
 

@@ -429,7 +429,15 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .group-body { position: relative; flex: 1; min-height: 0; }
 .group-body > .editor { position: absolute; inset: 0; }
 .pdf-pane { position: absolute; inset: 0; background: var(--td-pdf-bg, #e9e9e6); }
-.pdf-side { flex: none; position: relative; min-width: 0; border-left: 1px solid var(--td-border); }
+.pdf-side { flex: none; position: relative; display: flex; flex-direction: column; min-width: 0; border-left: 1px solid var(--td-border); }
+.pdf-side-body { position: relative; flex: 1; min-height: 0; }
+/* Same height as the tab bar beside it. */
+.pdf-nav { flex: none; display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 6px 0 10px; box-sizing: border-box; background: var(--td-bar); border-bottom: 1px solid var(--td-border); font-size: 12px; color: var(--td-muted); }
+.pdf-nav-crumbs { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pdf-nav-crumb { background: none; border: none; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.pdf-nav-crumb:hover { color: var(--td-accent); text-decoration: underline; }
+.pdf-nav-sep { margin: 0 5px; opacity: 0.6; }
+.pdf-nav-docs { max-width: 40%; height: 22px; font: inherit; font-size: 12px; color: var(--td-fg); background: var(--td-bg); border: 1px solid var(--td-border); border-radius: 5px; }
 .drop-zone { position: absolute; top: 0; bottom: 0; background: var(--td-match); border: 1px solid var(--td-accent); pointer-events: none; z-index: 5; }
 .drop-center { left: 0; right: 0; }
 .drop-left { left: 0; width: 50%; }

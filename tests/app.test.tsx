@@ -2597,3 +2597,39 @@ export default snippets([
     expect(v.state.doc.lineAt(v.state.selection.main.head).number).toBe(4); // inside, on the body line
   });
 });
+
+describe("PDF pane bar", () => {
+  const C = `${WS}/Fa30/1-CS101`;
+  const doc = (body: string) => `\\documentclass{article}\n\\begin{document}\n${body}\n\\end{document}`;
+  const files = { ...coursework, [`${C}/hw/hw2.tex`]: doc("two"), [`${C}/hw/hw3.tex`]: doc("three"), [`${C}/hw/preamble.tex`]: "\\usepackage{amsmath}" };
+  const bar = (root: HTMLElement) => pdfPane(root)?.querySelector<HTMLElement>(".pdf-nav") ?? null;
+  const crumbs = (root: HTMLElement) => [...bar(root)!.querySelectorAll(".pdf-nav-crumb")].map((x) => x.textContent);
+  const docs = (root: HTMLElement) => [...bar(root)!.querySelectorAll("option")].map((x) => x.textContent);
+  const button = (root: HTMLElement, cls: string) => bar(root)!.querySelector<HTMLButtonElement>(cls)!;
+
+  it("shows the document's folders and steps through the documents next to it, in the folder's order", async () => {
+    // Oldest first: hw3, hw1, hw2 (not by name).
+    const b = await boot(files, `${C}/hw/hw1.tex`, null, (h) => {
+      h.times[`${C}/hw/hw3.tex`] = { created: 1, modified: 1 };
+      h.times[`${C}/hw/hw1.tex`] = { created: 2, modified: 2 };
+      h.times[`${C}/hw/hw2.tex`] = { created: 3, modified: 3 };
+    });
+    await waitFor(() => bar(b.root) && docs(b.root).length === 3);
+    expect(crumbs(b.root)).toEqual(["Fa30", "1-CS101", "hw"]);
+    // Documents only: not preamble.tex (no \documentclass), the PDF or the zip.
+    expect(docs(b.root)).toEqual(["hw3", "hw1", "hw2"]);
+
+    button(b.root, ".pdf-nav-next").click();
+    await waitFor(() => b.editor().state.doc.toString().includes("two"));
+    await waitFor(() => button(b.root, ".pdf-nav-next").disabled);
+
+    const select = bar(b.root)!.querySelector<HTMLSelectElement>("select")!;
+    select.value = `${C}/hw/hw3.tex`;
+    select.dispatchEvent(new Event("change"));
+    await waitFor(() => b.editor().state.doc.toString().includes("three"));
+    await waitFor(() => button(b.root, ".pdf-nav-prev").disabled);
+
+    [...bar(b.root)!.querySelectorAll<HTMLElement>(".pdf-nav-crumb")].find((x) => x.textContent === "1-CS101")!.click();
+    await waitFor(() => b.root.querySelector(".overview-pane .ov-h1")?.textContent === "1-CS101");
+  });
+});
