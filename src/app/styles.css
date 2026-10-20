@@ -440,7 +440,7 @@ body.resizing .pdf-pane, body.resizing .editor { pointer-events: none; }
 .pdf-scroller { position: absolute; inset: 0; overflow: auto; }
 .pdf-scroller:focus { outline: none; }
 /* At least as wide as the view (pages centered), wider when zoomed in, so it scrolls sideways. */
-.pdf-pages { display: flex; flex-direction: column; align-items: center; padding: 12px; width: max-content; min-width: 100%; box-sizing: border-box; }
+.pdf-pages { display: flex; flex-direction: column; align-items: center; padding: 12px; width: max-content; min-width: 100%; box-sizing: border-box; transform-origin: 0 0; }
 .pdf-follow { position: absolute; left: 12px; bottom: 12px; z-index: 2; display: flex; align-items: center; gap: 5px; padding: 3px 8px; font-size: 11.5px; color: var(--td-muted); background: var(--td-bar); border: 1px solid var(--td-border); border-radius: 6px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15); opacity: 0; transition: opacity 0.15s; }
 .pdf-pane:hover .pdf-follow, .pdf-follow:not(.on) { opacity: 1; }
 .pdf-follow.on { color: var(--td-accent); }

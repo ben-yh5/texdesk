@@ -18,12 +18,15 @@ const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 6;
 const STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6];
 const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+/** As pdf.js's own viewer: bigger canvases are slow to draw (or come out blank), so they're drawn coarser and stretched. */
+const MAX_CANVAS_PIXELS = 2 ** 25;
 
 interface PageBox {
   el: HTMLDivElement;
   w: number; // PDF points
   h: number;
   rendered: boolean;
+  task?: ReturnType<PDFPageProxy["render"]>;
 }
 
 export class PdfJsViewer implements Viewer {
@@ -38,6 +41,9 @@ export class PdfJsViewer implements Viewer {
   private zoom = 1;
   /** Zoom while a pinch is in progress (shown as a CSS transform until it's rendered). */
   private pending: { zoom: number; clientX: number; clientY: number } | null = null;
+  /** Zoom the pages on screen were laid out at, and the pinch transform on them (origin 0 0). */
+  private shownZoom = 1;
+  private shift = { t: 1, x: 0, y: 0 };
   private pinchTimer: ReturnType<typeof setTimeout> | undefined;
   private hovered = false;
   private zoomLabel: HTMLButtonElement;
@@ -119,16 +125,31 @@ export class PdfJsViewer implements Viewer {
       this.scroller.scrollTop = box.el.offsetTop + point.y * this.scale - (focus.clientY - r.top);
       this.scroller.scrollLeft = box.el.offsetLeft + point.x * this.scale - (focus.clientX - r.left);
     } else this.scroller.scrollLeft = (this.scroller.scrollWidth - this.scroller.clientWidth) / 2;
+    // The pinch went on while this was laid out: carry on from the new layout.
+    const p = this.pending as PdfJsViewer["pending"]; // (TS assumes it's still null from above)
+    if (p) this.pinch(p.zoom, p.clientX, p.clientY);
   }
 
   /** During a pinch: scale what's rendered at once, render properly once it pauses. */
   private pinch(z: number, clientX: number, clientY: number) {
     this.pending = { zoom: z, clientX, clientY };
     this.showZoom();
-    if (this.pagesEl) {
-      const r = this.pagesEl.getBoundingClientRect();
-      this.pagesEl.style.transformOrigin = `${clientX - r.left}px ${clientY - r.top}px`;
-      this.pagesEl.style.transform = `scale(${z / this.zoom})`;
+    const el = this.pagesEl;
+    if (el) {
+      // Scale about the pointer, so what's under it stays there.
+      const r = el.getBoundingClientRect();
+      const t = z / this.shownZoom;
+      const k = 1 - t / this.shift.t;
+      // But keep them where the layout will put them, so they don't jump once rendered: no gap
+      // before or after them (unless they're shorter than the view), centred while narrower.
+      const s = this.scroller;
+      const fit = (v: number, scroll: number, view: number, size: number) => Math.min(scroll, Math.max(v, scroll + view - t * size));
+      const x = z <= 1
+        ? s.scrollLeft + (s.clientWidth - t * el.offsetWidth) / 2
+        : fit(this.shift.x + (clientX - r.left) * k, s.scrollLeft, s.clientWidth, el.offsetWidth);
+      const y = fit(this.shift.y + (clientY - r.top) * k, s.scrollTop, s.clientHeight, el.offsetHeight);
+      this.shift = { t, x, y };
+      el.style.transform = `translate(${x}px, ${y}px) scale(${t})`;
     }
     clearTimeout(this.pinchTimer);
     this.pinchTimer = setTimeout(() => {
@@ -164,15 +185,16 @@ export class PdfJsViewer implements Viewer {
 
   /** True if it finished (wasn't overtaken by a newer layout). */
   private async layout(doc: PDFDocumentProxy, keep: Anchor | null, gen: number): Promise<boolean> {
-    const sizes: { w: number; h: number }[] = [];
-    for (let i = 1; i <= doc.numPages; i++) {
+    const sizes = doc === this.doc ? this.pages.map(({ w, h }) => ({ w, h })) : [];
+    for (let i = sizes.length + 1; i <= doc.numPages; i++) {
       const vp = (await doc.getPage(i)).getViewport({ scale: 1 });
       sizes.push({ w: vp.width, h: vp.height });
     }
     if (gen !== this.generation) return false;
     const width = this.scroller.clientWidth || 600;
     this.lastWidth = width;
-    const scale = ((width - PAD * 2) / Math.max(...sizes.map((s) => s.w))) * this.zoom;
+    const zoom = this.zoom;
+    const scale = ((width - PAD * 2) / Math.max(...sizes.map((s) => s.w))) * zoom;
 
     const pagesEl = document.createElement("div");
     pagesEl.className = "pdf-pages";
@@ -187,12 +209,21 @@ export class PdfJsViewer implements Viewer {
       return { el, w: s.w, h: s.h, rendered: false };
     });
 
-    // Render the pages that will be visible before showing anything.
+    // A new document: render the pages that will be visible before showing anything. The same one
+    // (zoom, resize): show it at once, the old canvases stretched until the pages re-render.
     const first = Math.min(Math.max((keep?.page ?? 1) - 1, 0), pages.length - 1);
-    await Promise.all([first, first + 1].filter((i) => i < pages.length).map((i) => this.renderPage(doc, pages[i], i + 1, scale)));
-    if (gen !== this.generation) return false;
-
     const old = this.doc;
+    if (doc !== old) {
+      await Promise.all([first, first + 1].filter((i) => i < pages.length).map((i) => this.renderPage(doc, pages[i], i + 1, scale)));
+      if (gen !== this.generation) return false;
+    } else {
+      pages.forEach((p, i) => {
+        const canvas = this.pages[i]?.el.querySelector("canvas");
+        if (canvas) p.el.prepend(canvas);
+      });
+    }
+
+    this.pages.forEach((p) => p.task?.cancel());
     this.observer?.disconnect();
     this.pagesEl?.remove();
     this.scroller.append(pagesEl);
@@ -200,6 +231,8 @@ export class PdfJsViewer implements Viewer {
     this.pages = pages;
     this.doc = doc;
     this.scale = scale;
+    this.shownZoom = zoom;
+    this.shift = { t: 1, x: 0, y: 0 };
     const target = pages[first].el;
     this.scroller.scrollTop = target.offsetTop + (keep?.fraction ?? 0) * target.offsetHeight;
     if (old && old !== doc) void old.loadingTask.destroy();
@@ -219,13 +252,22 @@ export class PdfJsViewer implements Viewer {
     box.rendered = true;
     const page = await doc.getPage(n);
     const dpr = window.devicePixelRatio || 1;
-    const vp = page.getViewport({ scale: scale * dpr });
+    const pixels = box.w * box.h * (scale * dpr) ** 2;
+    const vp = page.getViewport({ scale: scale * dpr * Math.min(1, Math.sqrt(MAX_CANVAS_PIXELS / pixels)) });
     const canvas = document.createElement("canvas");
     canvas.width = Math.floor(vp.width);
     canvas.height = Math.floor(vp.height);
-    canvas.style.width = `${box.w * scale}px`;
-    canvas.style.height = `${box.h * scale}px`;
-    await page.render({ canvas, canvasContext: canvas.getContext("2d")!, viewport: vp }).promise;
+    // Fills the page box, so it can stand in (stretched) after the next zoom.
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
+    box.task = page.render({ canvas, canvasContext: canvas.getContext("2d")!, viewport: vp });
+    try {
+      await box.task.promise;
+    } catch (e) {
+      if (e instanceof pdfjs.RenderingCancelledException) return; // zoomed or reloaded meanwhile
+      throw e;
+    }
+    box.task = undefined;
     box.el.querySelector("canvas")?.remove();
     box.el.prepend(canvas);
     await this.addLinks(doc, page, box, scale);
@@ -306,7 +348,8 @@ export class PdfJsViewer implements Viewer {
     for (let i = 0; i < this.pages.length; i++) {
       const r = this.pages[i].el.getBoundingClientRect();
       if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
-        return { page: i + 1, x: (clientX - r.left) / this.scale, y: (clientY - r.top) / this.scale };
+        const scale = r.width / this.pages[i].w; // not this.scale: mid-pinch the pages are scaled
+        return { page: i + 1, x: (clientX - r.left) / scale, y: (clientY - r.top) / scale };
       }
     }
     return null;
