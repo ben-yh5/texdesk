@@ -2490,10 +2490,37 @@ describe("spelling", () => {
     expect(v.dom.querySelector(".cm-spellfix-word")).toBeNull();
     b.key("l", { metaKey: true });
     await waitFor(() => v.dom.querySelector(".cm-spellfix-word"));
-    pressIn(v, "ArrowRight");
+    pressIn(v, "x");
     expect(v.dom.querySelector(".cm-spellfix-word")).toBeNull();
     pressIn(v, "1"); // picker gone: not a pick
     expect(v.state.doc.line(3).text).toBe("The probabilty of $evnt$ is hihg.");
+  });
+
+  it("Space picks the selected suggestion, which ←→↑↓ and j/k move (stopping at the ends)", async () => {
+    const b = await open({ hihg: ["high", "hip", "hug"] });
+    const v = b.editor();
+    await waitFor(() => spellDiags(v).length === 1);
+    const end = v.state.doc.line(3).to;
+    v.dispatch({ selection: { anchor: end } });
+    b.key("l", { metaKey: true });
+    await waitFor(() => picker(v).length === 3);
+    const selected = () => v.dom.querySelector(".cm-spellfix-selected")?.textContent;
+    expect(selected()).toBe("1high");
+    pressIn(v, "k");
+    expect(selected()).toBe("1high");
+    pressIn(v, "j");
+    pressIn(v, "ArrowRight");
+    pressIn(v, "ArrowDown");
+    expect(selected()).toBe("3hug");
+    pressIn(v, "ArrowLeft");
+    pressIn(v, "ArrowUp");
+    pressIn(v, "j");
+    expect(selected()).toBe("2hip");
+    expect(v.state.doc.line(3).text).toBe("The probabilty of $evnt$ is hihg.");
+    pressIn(v, " ");
+    expect(v.state.doc.line(3).text).toBe("The probabilty of $evnt$ is hip.");
+    expect(v.state.selection.main.head).toBe(v.state.doc.line(3).to);
+    expect(v.dom.querySelector(".cm-spellfix-word")).toBeNull();
   });
 
   it("⌘L only looks before the cursor (or the word it's in)", async () => {

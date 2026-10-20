@@ -5,7 +5,7 @@ import {
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { HighlightStyle, bracketMatching, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { codeBlocks, latexLanguage } from "./codeblocks";
-import { lintGutter } from "@codemirror/lint";
+import { linter, lintGutter } from "@codemirror/lint";
 import { Vim, vim } from "@replit/codemirror-vim";
 import { links, openLink } from "./links";
 import { brackets } from "./brackets";
@@ -50,6 +50,10 @@ const theme = EditorView.theme({
   ".cm-diagnostic-error": { borderLeftColor: "var(--td-error)" },
   ".cm-diagnostic-warning": { borderLeftColor: "var(--td-warn)" },
   ".cm-lintRange-active": { backgroundColor: "var(--td-match)" },
+  // Actions (fixes) as plain options like ⌘L's picker, not CM's dark buttons.
+  ".cm-diagnostic-info": { borderLeftColor: "var(--td-muted)" },
+  ".cm-diagnosticAction": { backgroundColor: "transparent", color: "var(--td-fg)", padding: 0, marginLeft: "10px" },
+  ".cm-diagnosticAction:hover": { color: "var(--td-accent)" },
   // Misspellings: the usual red squiggle rather than the blue "info" one.
   // Vim mode: block cursor and the status / ex-command line.
   ".cm-fat-cursor": { background: "var(--td-accent)", color: "var(--td-bg) !important" },
@@ -75,6 +79,10 @@ const theme = EditorView.theme({
   ".cm-tooltip.cm-spellfix": { display: "flex", gap: "10px", padding: "3px 8px", fontFamily: "var(--td-mono)", fontSize: "12px" },
   ".cm-spellfix-option": { cursor: "pointer", whiteSpace: "nowrap" },
   ".cm-spellfix-option:hover": { color: "var(--td-accent)" },
+  ".cm-spellfix-selected": { color: "var(--td-accent)", backgroundColor: "var(--td-match)", borderRadius: "3px", padding: "0 3px", margin: "0 -3px" },
+  ".cm-spellfix-extra": { color: "var(--td-muted)" },
+  // Misspellings have their own hover tooltip (spellfix.ts); lint's is left empty for them.
+  ".cm-tooltip:has(> .cm-tooltip-lint:empty)": { display: "none" },
   ".cm-spellfix kbd": { color: "var(--td-muted)", marginRight: "4px", fontFamily: "inherit" },
 });
 
@@ -174,6 +182,7 @@ export function editorState(o: EditorOptions): EditorState {
   if (o.tex) {
     ext.push(
       latexLanguage, codeBlocks, lintGutter(),
+      linter(null, { tooltipFilter: (ds) => ds.filter((d) => d.source !== "spelling") }),
       linkCompletion, o.linkCandidates ? linkCandidates.of(o.linkCandidates) : [],
       snippetExtension(o.runtime),
       jumpOutMarker,

@@ -11,7 +11,7 @@ import { extractEnvironments, setUserEnvironments } from "../editor/latexcomplet
 import { insertFigure, saveFigure } from "../editor/images";
 import { openFind } from "../editor/search";
 import { parseDictionary, proseWords, rankSuggestions, wordsToCheck } from "../editor/spelling";
-import { MAX_OPTIONS, openSpellFix, showSpellFix } from "../editor/spellfix";
+import { EXTRA_ACTION, MAX_OPTIONS, openSpellFix, showSpellFix } from "../editor/spellfix";
 import { formatKey, matchesKey, toAccelerator } from "./keys";
 import { convertLatexSuite } from "../convert/latexSuite";
 import { contextAt } from "../scanner/field";
@@ -247,8 +247,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
           from: w.from, to: w.to, severity: "info", source: "spelling", markClass: "cm-spell",
           message: suggestions.length ? `“${w.word}” may be misspelled` : `“${w.word}” may be misspelled (no suggestions)`,
           actions: [
-            ...suggestions.slice(0, 3).map((x) => ({ name: x, apply: (v: EditorView, from: number, to: number) => v.dispatch({ changes: { from, to, insert: x }, userEvent: "input.spell" }) })),
-            { name: "Add to dictionary", apply: () => void addToDictionary(w.word) },
+            ...suggestions.slice(0, MAX_OPTIONS).map((x) => ({ name: x, apply: (v: EditorView, from: number, to: number) => v.dispatch({ changes: { from, to, insert: x }, userEvent: "input.spell" }) })),
+            { name: "Add to dictionary", markClass: EXTRA_ACTION, apply: () => void addToDictionary(w.word) },
           ],
         });
       }
@@ -2062,7 +2062,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     if (!w) { say("No misspellings before the cursor"); return; }
     v.dispatch({
       selection: EditorSelection.cursor(w.from),
-      effects: showSpellFix.of({ from: w.from, to: w.to, word: w.word, options: misses.get(w.word)!.slice(0, MAX_OPTIONS), home: open?.home ?? head }),
+      effects: showSpellFix.of({ from: w.from, to: w.to, word: w.word, options: misses.get(w.word)!.slice(0, MAX_OPTIONS), home: open?.home ?? head, selected: 0 }),
       scrollIntoView: true,
     });
     v.focus();
