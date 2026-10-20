@@ -45,6 +45,9 @@ async function waitFor<T>(fn: () => T | null | undefined | false, ms = 1000): Pr
   }
 }
 
+/** The PDF pane, if it's showing. */
+const pdfPane = (root: ParentNode) => [...root.querySelectorAll<HTMLElement>(".pdf-side")].find((el) => el.style.display !== "none") ?? null;
+
 let cleanup: (() => void)[] = [];
 // The welcome tour shows once; tests that want it clear this.
 // The test workspace's code is allowed (as if you'd said Allow); the trust tests undo this.
@@ -821,7 +824,8 @@ describe("Phase 5: preview", () => {
     const { out, root } = await bootPreview();
     await waitFor(() => out.loads.length);
     expect(out.loads[0].text).toBe("%PDF v1");
-    expect(tabs(root)).toEqual([["doc.tex*"], ["Output*"]]);
+    expect(tabs(root)).toEqual([["doc.tex*"]]);
+    expect(pdfPane(root)).not.toBeNull();
   });
 
   it("reloads after each build, keeping the scroll position", async () => {
@@ -833,13 +837,13 @@ describe("Phase 5: preview", () => {
     expect(out.loads[1]).toEqual({ text: "%PDF v2", anchor: null }); // null = keep the current position
   });
 
-  it("PDFs from the tree open in a tab beside the text", async () => {
+  it("PDFs from the tree open in a tab with the text", async () => {
     const b = await bootPreview();
     const row = await waitFor(() => [...b.root.querySelectorAll<HTMLElement>(".tree-row")].find((r) => r.textContent?.includes("hw1.pdf")));
     row.click();
     await waitFor(() => b.pdf.viewers[1]?.loads.length);
     expect(b.pdf.viewers[1].loads[0].text).toBe("%PDF course handout");
-    expect(tabs(b.root)).toEqual([["doc.tex*"], ["Output", "hw1.pdf*"]]);
+    expect(tabs(b.root)).toEqual([["doc.tex", "hw1.pdf*"]]);
   });
 
   it("⌘⇧J reveals the cursor's line in the PDF", async () => {
@@ -906,14 +910,26 @@ describe("Phase 5: preview", () => {
     await waitFor(() => editor().state.doc.lineAt(editor().state.selection.main.head).number === 6);
   });
 
-  it("⌘⇧P closes and reopens the output tab", async () => {
-    const { root, key } = await bootPreview();
+  it("⌘⇧P hides and shows the PDF pane, which keeps its place", async () => {
+    const { root, key, out } = await bootPreview();
+    await waitFor(() => out.loads.length);
     key("p", { metaKey: true, shiftKey: true });
-    await waitFor(() => !root.querySelector(".tab.output"));
-    expect(root.querySelectorAll(".group").length).toBe(1); // its emptied group went away
+    await waitFor(() => !pdfPane(root));
     key("p", { metaKey: true, shiftKey: true });
-    await waitFor(() => root.querySelector(".tab.output.active"));
-    expect(root.querySelectorAll(".group").length).toBe(2);
+    await waitFor(() => pdfPane(root));
+    expect(root.querySelectorAll(".group").length).toBe(1);
+    expect(out.loads.length).toBe(1); // the same viewer, not reloaded
+  });
+
+  it("dragging the PDF pane's edge resizes it; the width is remembered", async () => {
+    const { root } = await bootPreview();
+    const side = await waitFor(() => pdfPane(root));
+    const before = parseInt(side.style.width);
+    root.querySelector(".pdf-splitter")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: 500 }));
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 450 }));
+    window.dispatchEvent(new MouseEvent("mouseup", {}));
+    expect(parseInt(side.style.width)).toBe(before + 50);
+    expect(JSON.parse(localStorage.getItem("texdesk:pdfWidth")!)).toBe(before + 50);
   });
 
   it("switching documents remembers each one's position", async () => {
@@ -993,13 +1009,17 @@ describe("tabs and groups", () => {
 
   it("dragging a tab into another group moves it, and an emptied group closes", async () => {
     const b = await boot(files, hw1);
+    await waitFor(() => b.editor()?.state.doc.length);
+    (await treeRow(b.root, "hw2.tex")).click();
+    await waitFor(() => tabs(b.root)[0].includes("hw2.tex*"));
+    await b.command("Split editor right");
     await waitFor(() => b.root.querySelectorAll(".group").length === 2);
-    fire(await tabEl(b.root, "Output"), "dragstart");
+    fire(await tabEl(b.root, "hw2.tex"), "dragstart");
     const bar = b.root.querySelectorAll(".tabbar")[0];
     fire(bar, "dragover");
     fire(bar, "drop");
     await waitFor(() => b.root.querySelectorAll(".group").length === 1);
-    expect(tabs(b.root)).toEqual([["hw1.tex", "Output*"]]);
+    expect(tabs(b.root)).toEqual([["hw1.tex", "hw2.tex*"]]);
   });
 
   it("two text files side by side: clicking into one makes it current", async () => {
@@ -1040,8 +1060,8 @@ describe("tabs and groups", () => {
     cleanup.forEach((f) => f());
     cleanup = [];
     const again = await boot(files);
-    await waitFor(() => tabs(again.root).length === 2);
-    expect(tabs(again.root)).toEqual([["hw1.tex*"], ["Output*"]]);
+    await waitFor(() => tabs(again.root).length === 1 && pdfPane(again.root));
+    expect(tabs(again.root)).toEqual([["hw1.tex*"]]);
     await waitFor(() => again.editor()?.state.doc.toString().includes("Text"));
   });
 });
@@ -1051,16 +1071,16 @@ describe("Phase 6: settings", () => {
 
   it("shortcuts come from the keys settings and change when workspace.json is saved", async () => {
     const b = await boot(workspace, `${WS}/Fa30/1-CS101/hw/hw1.tex`);
-    await waitFor(() => b.root.querySelector(".tab.output"));
+    await waitFor(() => pdfPane(b.root));
     b.key("p", { metaKey: true, shiftKey: true });
-    await waitFor(() => !b.root.querySelector(".tab.output"));
+    await waitFor(() => !pdfPane(b.root));
     b.host.touch(WSJ, wsJson({}, { keys: { toggle_pdf: "Mod-r" } }));
     await waitFor(() => b.status().includes("Settings reloaded"));
     b.key("p", { metaKey: true, shiftKey: true });
     await settle(30);
-    expect(b.root.querySelector(".tab.output")).toBeNull();
+    expect(pdfPane(b.root)).toBeNull();
     b.key("r", { metaKey: true });
-    await waitFor(() => b.root.querySelector(".tab.output"));
+    await waitFor(() => pdfPane(b.root));
   });
 
   it("the Settings window saves for this workspace (or globally) and applies at once", async () => {
@@ -1093,7 +1113,7 @@ describe("Phase 6: settings", () => {
 
   it("Hotkeys: click a shortcut, press the new keys, and it's live", async () => {
     const b = await boot(workspace, `${WS}/Fa30/1-CS101/hw/hw1.tex`);
-    await waitFor(() => b.root.querySelector(".tab.output"));
+    await waitFor(() => pdfPane(b.root));
     await b.command("Settings");
     (await waitFor(() => [...b.root.querySelectorAll<HTMLElement>(".set-nav-item")].find((x) => x.textContent === "Hotkeys"))).click();
     const pdfRow = await waitFor(() => [...b.root.querySelectorAll(".set-row")].find((r) => r.querySelector(".set-label")?.textContent === "Toggle PDF") as HTMLElement);
@@ -1103,7 +1123,7 @@ describe("Phase 6: settings", () => {
     b.key("Escape");
     await waitFor(() => !b.root.querySelector(".set"));
     b.key("r", { metaKey: true });
-    await waitFor(() => !b.root.querySelector(".tab.output"));
+    await waitFor(() => !pdfPane(b.root));
   });
 
   it("the palette shows the configured shortcut", async () => {
@@ -1163,11 +1183,11 @@ describe("Phase 6: settings", () => {
     const built: string[] = [];
     b.host.compile = async (req) => { built.push(req.file); return { ok: true, cancelled: false, exitCode: 0, stdout: "", stderr: "", durationMs: 1, pdf: null, launchError: null }; };
     await b.command("Toggle PDF");
-    await waitFor(() => !b.root.querySelector(".tab.output"));
+    await waitFor(() => !pdfPane(b.root));
     await b.command("New Homework");
     const p = `${WS}/Fa30/1-CS101/hw/hw3.tex`;
     await waitFor(() => built.includes(p));
-    await waitFor(() => b.root.querySelector(".tab.output"));
+    await waitFor(() => pdfPane(b.root));
     expect(b.editor().state.doc.toString()).toBe(b.host.files.get(p));
   });
 
@@ -1432,7 +1452,7 @@ describe("menus and toolbar", () => {
     expect(togglePdf()).toEqual({ id: "toggle_pdf", label: "Show/Hide PDF", accelerator: "CmdOrCtrl+Shift+P" });
     expect(host.menu.sections.flatMap((s) => s.items).some((i) => typeof i === "object" && "id" in i && i.id === "compile")).toBe(false);
     host.menu.select("toggle_pdf");
-    await waitFor(() => !root.querySelector(".tab.output"));
+    await waitFor(() => !pdfPane(root));
     // Commands that can't run here say why instead of doing nothing.
     host.menu.select("set_up");
     await waitFor(() => status().includes("needs a folder that isn't set up yet"));
@@ -1442,27 +1462,27 @@ describe("menus and toolbar", () => {
 
   it("a shortcut the page already handled isn't run again by its menu item", async () => {
     const { host, root, key } = await bootWithCompiler();
-    await waitFor(() => host.menu.sections.length > 0 && root.querySelector(".tab.output"));
+    await waitFor(() => host.menu.sections.length > 0 && pdfPane(root));
     key("p", { metaKey: true, shiftKey: true });
     host.menu.select("toggle_pdf"); // what macOS would send for the same keystroke
     await settle(100);
-    expect(root.querySelector(".tab.output")).toBeNull();
+    expect(pdfPane(root)).toBeNull();
     await settle(300);
     host.menu.select("toggle_pdf"); // a real menu click later still works
-    await waitFor(() => root.querySelector(".tab.output"));
+    await waitFor(() => pdfPane(root));
   });
 
   it("builds don't reopen the PDF pane once you've hidden it", async () => {
     const { root, calls, command, editor } = await bootWithCompiler();
     await command("Toggle PDF");
-    await waitFor(() => !root.querySelector(".tab.output"));
+    await waitFor(() => !pdfPane(root));
     editor().dispatch({ changes: { from: editor().state.doc.length, insert: "\n% edit" } });
     editor().contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ...modKey, bubbles: true, cancelable: true }));
     await waitFor(() => calls.length === 1, 2000);
     await command("Save");
     await waitFor(() => calls.length === 2, 2000);
     await settle(50);
-    expect(root.querySelector(".tab.output")).toBeNull();
+    expect(pdfPane(root)).toBeNull();
   });
 
   it("pausing typing saves and builds", async () => {
@@ -1479,11 +1499,11 @@ describe("menus and toolbar", () => {
   it("the tab bar's PDF button shows/hides the PDF", async () => {
     const { root } = await bootWithCompiler();
     const pdfButton = [...root.querySelectorAll<HTMLButtonElement>(".tb-btn")].find((b) => b.textContent?.includes("PDF"))!;
-    expect(root.querySelector(".tab.output")).not.toBeNull();
+    expect(pdfPane(root)).not.toBeNull();
     pdfButton.click();
-    await waitFor(() => !root.querySelector(".tab.output"));
+    await waitFor(() => !pdfPane(root));
     pdfButton.click();
-    await waitFor(() => root.querySelector(".tab.output"));
+    await waitFor(() => pdfPane(root));
   });
 
   function rightClick(el: Element, x = 5, y = 5) {
@@ -1522,14 +1542,14 @@ describe("menus and toolbar", () => {
     await waitFor(() => editor().state.doc.toString().startsWith("\\documentclass{article}\nText"));
   });
 
-  it("the PDF's right-click menu jumps to source and closes the tab", async () => {
+  it("the PDF's right-click menu jumps to source and hides the PDF", async () => {
     const { root } = await bootWithCompiler();
     const pane = await waitFor(() => root.querySelector(".pdf-pane"));
     rightClick(pane);
     const labels = (await waitFor(() => menuItems(root).length > 0 && menuItems(root))).map((b) => b.firstChild!.textContent);
-    expect(labels).toEqual(["Jump to Source Here", "Show Cursor in PDF", "Open PDF Externally", "Save PDF As…", "Close Tab"]);
-    await clickItem(root, "Close Tab");
-    await waitFor(() => !root.querySelector(".tab.output"));
+    expect(labels).toEqual(["Jump to Source Here", "Show Cursor in PDF", "Open PDF Externally", "Save PDF As…", "Hide PDF"]);
+    await clickItem(root, "Hide PDF");
+    await waitFor(() => !pdfPane(root));
   });
 
   it("tabs have a right-click menu", async () => {

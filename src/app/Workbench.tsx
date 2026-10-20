@@ -19,7 +19,7 @@ export interface TabLabel {
 export interface WorkbenchProps {
   layout: Layout;
   label(tab: Tab): TabLabel;
-  /** Draws a PDF/output tab's content (the tab is a getter: a rename gives it a new path). */
+  /** Draws a PDF or overview tab's content (the tab is a getter: a rename gives it a new path). */
   renderPdf(tab: () => Tab | null, visible: () => boolean): JSX.Element;
   /** Each group has one text editor; the app attaches a CodeMirror view to this element. */
   mountEditor(group: string, el: HTMLElement): void;

@@ -1,13 +1,13 @@
 // Editor groups and tabs, VS Code style: the window holds one or more groups side by side,
-// each with its own tabs. A tab is a text file, a PDF, a folder overview, or the single
-// "output" tab (the open document's build). Pure functions on an immutable layout, so the rules are testable.
+// each with its own tabs. A tab is a text file, a PDF or a folder overview (the open
+// document's build has a pane of its own). Pure functions on an immutable layout, so the rules are testable.
 
-export type TabKind = "text" | "pdf" | "output" | "overview";
+export type TabKind = "text" | "pdf" | "overview";
 
 export interface Tab {
   id: string;
   kind: TabKind;
-  /** File path; null for the output tab (it follows the open document). */
+  /** File path. */
   path: string | null;
   /**
    * A preview tab (shown in italics): opening something else the same way replaces it, like
@@ -222,8 +222,10 @@ export function deserialize(saved: SavedLayout, keep: (t: { kind: TabKind; path:
     const tabs: Tab[] = [];
     let active: string | null = null;
     sg.tabs.forEach((st, i) => {
-      const p = st.kind === "output" ? null : keep(st);
-      if (st.kind !== "output" && !p) return;
+      // The build's PDF had an "output" tab before it had its own pane.
+      if ((st.kind as string) === "output") return;
+      const p = keep(st);
+      if (!p) return;
       const tab: Tab = { id: newId("t"), kind: st.kind, path: p || null, ...(st.preview ? { preview: true } : {}) };
       tabs.push(tab);
       if (i === sg.active || !active) active = tab.id;

@@ -73,6 +73,8 @@ import * as prefs from "./prefs";
 /** Default sidebar width, and its limits while dragging. */
 const SIDEBAR_WIDTH = 250;
 const clampSidebar = (w: number) => Math.round(Math.min(Math.max(w, 160), Math.max(240, window.innerWidth * 0.6)));
+const pdfDefaultWidth = () => Math.round(window.innerWidth * 0.45);
+const clampPdf = (w: number) => Math.round(Math.min(Math.max(w, 240), Math.max(320, window.innerWidth * 0.75)));
 
 const MODE_LABEL: Record<Mode, string> = { text: "text", inline: "inline math", display: "display math", code: "code" };
 
@@ -141,6 +143,9 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   const [expanded, setExpanded] = createSignal<Set<string>>(new Set());
   const [sidebar, setSidebar] = createSignal(prefs.get("sidebar", true));
   const [sidebarWidth, setSidebarWidth] = createSignal(clampSidebar(prefs.get("sidebarWidth", SIDEBAR_WIDTH)));
+  /** The PDF pane on the right: shown (⌘⇧P hides it), and its width. */
+  const [pdfShown, setPdfShown] = createSignal(prefs.get("preview", true));
+  const [pdfWidth, setPdfWidth] = createSignal(clampPdf(prefs.get("pdfWidth", pdfDefaultWidth())));
   const [path, setPath] = createSignal<string | null>(null);
   const [isTex, setIsTex] = createSignal(false);
   const [dirty, setDirty] = createSignal(false);
@@ -168,11 +173,12 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   const [layout, setLayoutSignal] = createSignal<Layout>(emptyLayout());
   const [outputVersion, setOutputVersion] = createSignal(0);
   const [isRootDoc, setIsRootDoc] = createSignal(false);
-  const previewOpen = () => !!findSpec(layout(), { kind: "output", path: null });
   let sidebarApi: SidebarApi | null = null;
 
-  /** The document whose PDF the output tab shows: the open file if it's a full document, else the last build. */
+  /** The document whose PDF the PDF pane shows: the open file if it's a full document, else the last build. */
   const outputSource = () => (isTex() && path() && isRootDoc() ? path() : build().file);
+  /** The PDF pane is on screen: shown, and there's a document for it. */
+  const pdfVisible = () => pdfShown() && !!outputSource();
   const outputPdf = () => {
     const src = outputSource();
     return src ? join(dirname(src), ".build", basename(src).replace(/\.tex$/, ".pdf")) : null;
@@ -311,7 +317,6 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   // keep their EditorState (undo history, cursor) in `docs`. The "current" file (path(),
   // view) is the text tab last focused: commands, the status bar and builds follow it.
 
-  const OUTPUT: TabSpec = { kind: "output", path: null };
   const views = new Map<string, EditorView>();
   /** Group → file its view shows. */
   const viewDoc = new Map<string, string | null>();
@@ -319,8 +324,6 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   const docs = new Map<string, EditorState>();
   const pdfAnchors = new Map<string, Anchor>();
   let outputApi: PdfPaneApi | null = null;
-  /** Open the output beside the first document opened in a fresh layout. */
-  let autoOutput = prefs.get("preview", true);
 
   function setLayout(l: Layout) {
     setLayoutSignal(l);
@@ -437,17 +440,10 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     return withText?.id ?? layout().activeGroup;
   }
 
-  /** Where PDFs open by default: beside the text, in the group showing the output or another PDF. */
-  function pdfGroup(): { group: string; split: boolean } {
-    const out = findSpec(layout(), OUTPUT);
-    if (out) return { group: out.group.id, split: false };
+  /** Where PDFs open by default: in a group already showing one, else with the text. */
+  function pdfGroup(): string {
     const text = textGroup();
-    const pdfs = layout().groups.find((g) => g.id !== text && g.tabs.some((t) => t.kind === "pdf" || t.kind === "output"));
-    if (pdfs) return { group: pdfs.id, split: false };
-    const other = layout().groups.find((g) => g.id !== text);
-    if (other) return { group: other.id, split: false };
-    const only = groupById(layout(), text);
-    return only && only.tabs.length ? { group: text, split: true } : { group: text, split: false };
+    return layout().groups.find((g) => g.id !== text && g.tabs.some((t) => t.kind === "pdf"))?.id ?? text;
   }
 
   type Where = { group: string; index?: number; side?: "left" | "right" | "center" };
@@ -487,7 +483,6 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       view.dispatch({ selection: EditorSelection.cursor(pos), scrollIntoView: true });
     }
     view?.focus();
-    if (autoOutput && isRootDoc()) { autoOutput = false; openOutput(); }
     // A document that has never been built builds now, so there's always a PDF to look at.
     if (isRootDoc() && path() === p && !(await host.exists(join(dirname(p), ".build", basename(p).replace(/\.tex$/, ".pdf"))))) builder.schedule(p, 0);
   }
@@ -563,7 +558,6 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     if (!hit) return;
     if (hit.tab.kind === "text" && hit.tab.path === path() && !(await save())) return;
     setLayout(removeTab(layout(), id));
-    if (hit.tab.kind === "output") prefs.set("preview", false);
     await reconcile();
     const g = path() ? shownIn(path()!) : null;
     if (g) views.get(g)?.focus();
@@ -599,20 +593,14 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     const spec: TabSpec = { kind: "pdf", path: p };
     if (where) setLayout(placeSpec(findSpec(layout(), spec)?.tab ?? spec, where));
     else if (findSpec(layout(), spec)) setLayout(revealTab(layout(), spec, layout().activeGroup).layout);
-    else {
-      const d = pdfGroup();
-      setLayout(d.split ? split(layout(), spec, d.group, "right").layout : place(layout(), spec, d.group).layout);
-    }
+    else setLayout(place(layout(), spec, pdfGroup()).layout);
     await reconcile();
   }
 
-  /** Shows the build output tab, opening it beside the text if needed. */
+  /** Shows the PDF pane. */
   function openOutput() {
-    if (findSpec(layout(), OUTPUT)) { setLayout(revealTab(layout(), OUTPUT, layout().activeGroup).layout); void reconcile(); return; }
-    const d = pdfGroup();
-    setLayout(d.split ? split(layout(), OUTPUT, d.group, "right").layout : place(layout(), OUTPUT, d.group).layout);
+    setPdfShown(true);
     prefs.set("preview", true);
-    void reconcile();
   }
 
   /** Opens any path: a folder becomes the workspace; a file opens (switching workspace if needed). */
@@ -634,7 +622,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     await showFile(p, cursor);
   }
 
-  /** A PDF from the tree/⌘K: the open document's own export shows as the output; anything else gets a tab. */
+  /** A PDF from the tree/⌘K: the open document's own export shows in the PDF pane; anything else gets a tab. */
   async function showPdf(p: string) {
     const r = root();
     const src = r ? generated().get(relative(r, p)) : undefined;
@@ -1275,7 +1263,6 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     // Tabs and groups as you left them; or, the first time, the last file with its output beside it.
     const saved = prefs.get<SavedLayout | null>(`layout:${r}`, null);
     const files = new Set(entries().filter((e) => !e.isDir).map((e) => e.path));
-    autoOutput = !saved && prefs.get("preview", true);
     if (opts.restoreFile !== false && saved) {
       const dirs = new Set(entries().filter((e) => e.isDir).map((e) => e.path));
       setLayout(deserialize(saved, (t) => {
@@ -2101,13 +2088,12 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   /** The line last edited, for scrolling the output there after the next build. */
   let lastEdit: { file: string; line: number } | null = null;
 
-  /** After a build: scroll the output (if it's showing) to the last edited line, quietly. */
+  /** After a build: scroll the PDF pane (if it's showing) to the last edited line, quietly. */
   async function followEdit() {
     const edit = lastEdit;
     const src = outputSource();
     if (!edit || !src || !config().editor.followEdits) return;
-    const out = findSpec(layout(), OUTPUT);
-    if (!out || out.group.active !== out.tab.id) return;
+    if (!pdfShown()) return;
     // An edit in the preamble has no place of its own in the PDF.
     const text = view && path() === edit.file ? view.state.doc.toString() : texCache.get(edit.file);
     const begin = text ? text.split("\n").findIndex((l) => /^[^%]*\\begin\{document\}/.test(l)) + 1 : 0;
@@ -2523,11 +2509,28 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     } catch (err) { fail(err); }
   }
 
-  /** Shows the output tab, or closes it if it's showing. */
+  /** Shows or hides the PDF pane. */
   function togglePreview() {
-    const hit = findSpec(layout(), OUTPUT);
-    if (hit && hit.group.active === hit.tab.id) void closeTab(hit.tab.id);
-    else openOutput();
+    const shown = !pdfShown();
+    setPdfShown(shown);
+    prefs.set("preview", shown);
+  }
+
+  /** Dragging the PDF pane's left edge resizes it; the width is remembered. */
+  function startPdfResize(e: MouseEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const start = pdfWidth();
+    const move = (ev: MouseEvent) => setPdfWidth(clampPdf(start - (ev.clientX - startX)));
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      document.body.classList.remove("resizing");
+      prefs.set("pdfWidth", pdfWidth());
+    };
+    document.body.classList.add("resizing");
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
   }
 
   let syncCache: { key: string; sync: SyncTex } | null = null;
@@ -3114,22 +3117,21 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   }
 
   /** Right-click inside a PDF tab. */
-  function onPdfMenu(tab: Tab, point: { page: number; x: number; y: number } | null, x: number, y: number) {
-    const close: ContextItem = { label: "Close Tab", hint: shortcut("close_tab"), run: () => closeTab(tab.id) };
-    const out = outputPdf();
-    const items: ContextItem[] = tab.kind === "output" ? [
-      { label: "Jump to Source Here", hint: "⌘-click", disabled: !point || !out, run: () => point && syncFromPdf(point.page, point.x, point.y) },
+  /** Right-click inside a PDF tab, or (`tab` null) the PDF pane. */
+  function onPdfMenu(tab: Tab | null, point: { page: number; x: number; y: number } | null, x: number, y: number) {
+    const items: ContextItem[] = !tab ? [
+      { label: "Jump to Source Here", hint: "⌘-click", disabled: !point || !outputPdf(), run: () => point && syncFromPdf(point.page, point.x, point.y) },
       cmdItem("show_in_pdf", "Show Cursor in PDF"),
       "separator",
       { label: "Open PDF Externally", run: openPdfExternally },
       cmdItem("save_pdf", "Save PDF As…"),
       "separator",
-      close,
+      cmdItem("toggle_pdf", "Hide PDF"),
     ] : [
       { label: "Open Externally", run: () => host.openExternal(tab.path!).catch(fail) },
       { label: "Reveal in Finder", run: () => host.openExternal(dirname(tab.path!)).catch(fail) },
       "separator",
-      close,
+      { label: "Close Tab", hint: shortcut("close_tab"), run: () => closeTab(tab.id) },
     ];
     setCtxMenu({ x, y, items });
   }
@@ -3187,10 +3189,6 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   function tabLabel(t: Tab): TabLabel {
     const r = root();
     const rel = (p: string) => (r && p.startsWith(r + "/") ? relative(r, p) : p);
-    if (t.kind === "output") {
-      const pdf = outputPdf();
-      return { name: "Output", detail: pdf ? basename(pdf) : undefined, title: pdf ? `Build output: ${rel(outputSource()!)}` : "Build output of the open document" };
-    }
     if (t.kind === "overview") {
       const home = t.path === r;
       return { name: basename(t.path!), detail: home ? "Home" : "Overview", title: home ? `${basename(r!)}: the workspace's home page` : `Overview of ${rel(t.path!)}` };
@@ -3202,21 +3200,16 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     const t = tab();
     if (!t) return null;
     if (t.kind === "overview") return renderOverview(tab, visible);
-    const output = t.kind === "output";
     return (
       <PdfPane
         host={host}
         factory={props.viewerFactory ?? pdfjsViewer}
-        pdf={output ? outputPdf() : tab()?.path ?? null}
-        version={output ? outputVersion() : 0}
+        pdf={tab()?.path ?? null}
         visible={visible()}
         anchors={pdfAnchors}
-        emptyMessage={output ? "The PDF shows here once the document builds" : "Couldn't open this PDF"}
-        onSync={output ? (p, x, y) => void syncFromPdf(p, x, y) : undefined}
+        emptyMessage="Couldn't open this PDF"
         onLink={followPdfLink}
         onContextMenu={(pt, x, y) => { const cur = tab(); if (cur) onPdfMenu(cur, pt, x, y); }}
-        api={output ? (a) => (outputApi = a) : undefined}
-        follow={output ? { on: config().editor.followEdits, toggle: () => void toggleFollowEdits() } : undefined}
       />
     );
   }
@@ -3389,7 +3382,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
                     <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M2.5 3.5h11M2.5 7h7M2.5 10h7M2.5 13h7" /></svg>
                   </button>
                 </Show>
-                <button class={`tb-btn tb-pdf ${previewOpen() ? "on" : ""}`} title={`Show/hide the PDF (${shortcut("toggle_pdf")})`} onClick={() => runCommand("toggle_pdf")}>
+                <button class={`tb-btn tb-pdf ${pdfShown() ? "on" : ""}`} title={`Show/hide the PDF (${shortcut("toggle_pdf")})`} onClick={() => runCommand("toggle_pdf")}>
                   <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" /><path d="M10 2.5v11" /></svg>
                   <span>PDF</span>
                 </button>
@@ -3435,6 +3428,29 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
             )}
           />
         </main>
+        {/* The open document's PDF. Hidden, not removed, so it keeps its place. */}
+        <div
+          class="pdf-splitter" title="Drag to resize; double-click to reset"
+          style={{ display: pdfVisible() ? "" : "none" }}
+          onMouseDown={startPdfResize}
+          onDblClick={() => { setPdfWidth(clampPdf(pdfDefaultWidth())); prefs.set("pdfWidth", pdfWidth()); }}
+        />
+        <aside class="pdf-side" style={{ width: `${pdfWidth()}px`, display: pdfVisible() ? "" : "none" }}>
+          <PdfPane
+            host={host}
+            factory={props.viewerFactory ?? pdfjsViewer}
+            pdf={outputPdf()}
+            version={outputVersion()}
+            visible={pdfVisible()}
+            anchors={pdfAnchors}
+            emptyMessage="The PDF shows here once the document builds"
+            onSync={(p, x, y) => void syncFromPdf(p, x, y)}
+            onLink={followPdfLink}
+            onContextMenu={(pt, x, y) => onPdfMenu(null, pt, x, y)}
+            api={(a) => (outputApi = a)}
+            follow={{ on: config().editor.followEdits, toggle: () => void toggleFollowEdits() }}
+          />
+        </aside>
       </div>
 
       <Show when={debug() && isTex() && path()}>

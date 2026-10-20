@@ -399,8 +399,8 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .group-splitter { flex: none; width: 5px; margin: 0 -2px; z-index: 2; cursor: col-resize; border-left: 2px solid transparent; border-right: 2px solid transparent; background: var(--td-border); background-clip: content-box; }
 .group-splitter:hover { background-color: var(--td-accent); }
 /* Sits over the sidebar's right border; only the hover highlight shows. */
-.sidebar-splitter { flex: none; width: 6px; margin: 0 -3px; z-index: 3; cursor: col-resize; position: relative; }
-.sidebar-splitter:hover, body.resizing .sidebar-splitter:active { background: var(--td-accent); background-clip: content-box; border-left: 2px solid transparent; border-right: 2px solid transparent; }
+.sidebar-splitter, .pdf-splitter { flex: none; width: 6px; margin: 0 -3px; z-index: 3; cursor: col-resize; position: relative; }
+.sidebar-splitter:hover, body.resizing .sidebar-splitter:active, .pdf-splitter:hover, body.resizing .pdf-splitter:active { background: var(--td-accent); background-clip: content-box; border-left: 2px solid transparent; border-right: 2px solid transparent; }
 .tabbar { flex: none; display: flex; height: 34px; background: var(--td-bar); border-bottom: 1px solid var(--td-border); overflow: hidden; }
 .tabbar-rest { flex: 1; min-width: 24px; }
 .tabs { display: flex; min-width: 0; overflow-x: auto; scrollbar-width: none; }
@@ -413,7 +413,6 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .group.focused .tab.active { box-shadow: inset 0 1px 0 var(--td-accent); }
 .tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab.preview .tab-name { font-style: italic; }
-.tab.output .tab-name { font-weight: 600; }
 .tab-detail { color: var(--td-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-close { display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: none; border-radius: 4px; color: var(--td-muted); font-size: 14px; line-height: 1; }
 .tab-close:hover { background: var(--td-border); color: var(--td-fg); }
@@ -430,6 +429,7 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .group-body { position: relative; flex: 1; min-height: 0; }
 .group-body > .editor { position: absolute; inset: 0; }
 .pdf-pane { position: absolute; inset: 0; background: var(--td-pdf-bg, #e9e9e6); }
+.pdf-side { flex: none; position: relative; min-width: 0; border-left: 1px solid var(--td-border); }
 .drop-zone { position: absolute; top: 0; bottom: 0; background: var(--td-match); border: 1px solid var(--td-accent); pointer-events: none; z-index: 5; }
 .drop-center { left: 0; right: 0; }
 .drop-left { left: 0; width: 50%; }

@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { Layout, activeTab, deserialize, emptyLayout, findSpec, keepTab, openPreview, others, place, removeTab, renamePaths, reveal, serialize, split } from "../src/app/layout";
+import { Layout, SavedLayout, activeTab, deserialize, emptyLayout, findSpec, keepTab, openPreview, others, place, removeTab, renamePaths, reveal, serialize, split } from "../src/app/layout";
 
 const text = (path: string) => ({ kind: "text" as const, path });
-const names = (l: Layout) => l.groups.map((g) => g.tabs.map((t) => (t.path ?? "OUT") + (t.id === g.active ? "*" : "")));
+const names = (l: Layout) => l.groups.map((g) => g.tabs.map((t) => t.path + (t.id === g.active ? "*" : "")));
 
 function twoGroups() {
   let l = emptyLayout();
   l = place(l, text("a"), l.groups[0].id).layout;
   l = place(l, text("b"), l.groups[0].id).layout;
-  const s = split(l, { kind: "output", path: null }, l.groups[0].id, "right");
+  const s = split(l, { kind: "pdf", path: "OUT" }, l.groups[0].id, "right");
   return s.layout;
 }
 
@@ -38,7 +38,7 @@ describe("editor groups", () => {
 
   it("dragging a tab to another group moves it; an emptied group goes away", () => {
     let l = twoGroups();
-    const out = findSpec(l, { kind: "output", path: null })!.tab;
+    const out = findSpec(l, { kind: "pdf", path: "OUT" })!.tab;
     l = place(l, out, l.groups[0].id, 0).layout;
     expect(names(l)).toEqual([["OUT*", "a", "b"]]);
     expect(l.groups[0].size).toBe(1);
@@ -98,8 +98,13 @@ describe("editor groups", () => {
     const l = twoGroups();
     const saved = JSON.parse(JSON.stringify(serialize(l, (p) => p)));
     const back = deserialize(saved, (t) => (t.path === "a" ? false : `/W/${t.path}`));
-    expect(names(back)).toEqual([["/W/b*"], ["OUT*"]]);
+    expect(names(back)).toEqual([["/W/b*"], ["/W/OUT*"]]);
     expect(deserialize({ groups: [], activeGroup: 0 }, () => null).groups.length).toBe(1);
+  });
+
+  it("restoring drops the build's old output tab (it has a pane of its own now)", () => {
+    const saved = { groups: [{ tabs: [{ kind: "text" as const, path: "a.tex" }], active: 0, size: 1 }, { tabs: [{ kind: "output", path: null }], active: 0, size: 1 }], activeGroup: 1 } as unknown as SavedLayout;
+    expect(names(deserialize(saved, (t) => `/W/${t.path}`))).toEqual([["/W/a.tex*"]]);
   });
 
   it("restoring shares the row out again when groups are dropped (a lone group of size 0.5 would fill half the window)", () => {
