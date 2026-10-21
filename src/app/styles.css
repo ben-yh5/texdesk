@@ -590,10 +590,15 @@ body.resizing .pdf-pane, body.resizing .editor { pointer-events: none; }
 .dg-errors { border-top: 1px solid var(--td-border); padding: 8px 12px; max-height: 30%; overflow: auto; }
 .dg-error { color: var(--td-error); font-size: 12px; padding: 2px 0; }
 .dg-ai { border-top: 1px solid var(--td-border); padding: 10px 14px; display: grid; gap: 8px; background: var(--td-bar); }
-.dg-ask { width: 100%; box-sizing: border-box; resize: none; padding: 6px 9px; border: 1px solid var(--td-border); border-radius: 6px; background: var(--td-bg); color: var(--td-fg); font: inherit; font-size: 13px; outline: none; }
-.dg-ask::placeholder { color: var(--td-muted); opacity: 0.7; }
-.dg-ask:focus { border-color: var(--td-accent); }
+.dg-ask { min-width: 0; padding: 0 9px; border: 1px solid var(--td-border); border-radius: 6px; background: var(--td-bg); overflow: hidden; }
+.dg-ask:focus-within { border-color: var(--td-accent); }
+.dg-ask.busy { opacity: 0.6; }
+.dg-ask .cm-editor.cm-focused { outline: none; }
+.dg-ask .cm-placeholder { color: var(--td-muted); opacity: 0.7; }
 .dg-ai-foot { display: flex; align-items: center; gap: 12px; }
 .dg-ai-status { color: var(--td-muted); font-size: 12px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dg-ai-total { color: var(--td-muted); font-size: 12px; }
+.dg-ai-opt { display: inline-flex; align-items: center; gap: 5px; color: var(--td-muted); font-size: 12px; }
+.dg-context { width: 44px; padding: 2px 4px; border: 1px solid var(--td-border); border-radius: 5px; background: var(--td-bg); color: var(--td-fg); font: inherit; }
+.dg-model { height: 24px; font-size: 12px; }
 .dg-ai-key { color: var(--td-muted); font-size: 12px; }

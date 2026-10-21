@@ -6,17 +6,20 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-import { EditorState, Transaction } from "@codemirror/state";
-import { EditorView, drawSelection, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { Compartment, EditorState, Transaction } from "@codemirror/state";
+import { EditorView, drawSelection, highlightActiveLine, keymap, lineNumbers, placeholder } from "@codemirror/view";
+import { defaultKeymap, history, historyKeymap, insertNewline } from "@codemirror/commands";
 import { bracketMatching, syntaxHighlighting } from "@codemirror/language";
 import { latexLanguage } from "../editor/codeblocks";
+import { findReplace, openFind } from "../editor/search";
 import { highlight, theme } from "../editor/setup";
+import { snippetExtension } from "../snippets/cm";
+import type { SnippetRuntime } from "../snippets/runtime";
 import type { AiKeyStatus, Host } from "../host/types";
-import type { AiSettings } from "../workspace/config";
+import { AI_MODELS, AiSettings } from "../workspace/config";
 import { DiagramBuild, DiagramError, buildDiagram } from "./build";
 import { Usage, askClaude } from "./ai";
-import { Item, Picture, Point, addItem, deleteItem, fmt, freshName, moveItem, movable, nameItem, parsePicture, setPoint, setText, toUnits } from "./tikz";
+import { Item, Picture, Point, addItem, deleteItem, fmt, freshName, moveItem, movable, nameItem, parsePicture, setPoint, setText, surroundings, toUnits } from "./tikz";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -27,17 +30,23 @@ const FINE_GRID = 0.05;
 const PT_PER_BP = 72.27 / 72;
 /** Widest image sent to Claude, in pixels. */
 const AI_IMAGE_WIDTH = 800;
+/** Lines of the document before and after the picture sent to Claude, unless changed in the window. */
+const CONTEXT_LINES = 5;
 
 export interface DiagramEditorProps {
   host: Host;
   picture: string;
   preamble: string;
-  /** The document text around the picture, for Claude. */
+  /** The document text before and after the picture (Claude gets some lines of it). */
   context: { before: string; after: string };
   docDir: string;
   searchPaths: string[];
   tectonic: string | null;
   ai: AiSettings;
+  /** The snippets, for the Ask box. */
+  runtime: SnippetRuntime;
+  /** The code's editor once it's there (null when it goes), so Find can search it. */
+  onCodeView?(view: EditorView | null): void;
   onDone(picture: string): void;
   onCancel(): void;
   onOpenAiSettings(): void;
@@ -91,6 +100,10 @@ export function DiagramEditor(props: DiagramEditorProps) {
   /** Null until checked; "denied": TeXdesk wasn't allowed to read the key, so Claude is off. */
   const [keyStatus, setKeyStatus] = createSignal<AiKeyStatus | null>(null);
   const [total, setTotal] = createSignal<Usage>({ input: 0, output: 0 });
+  /** For this window only; Settings → AI has the default model. */
+  const [model, setModel] = createSignal(props.ai.model);
+  const [contextLines, setContextLines] = createSignal(CONTEXT_LINES);
+  const models = AI_MODELS.some((m) => m.value === props.ai.model) ? AI_MODELS : [{ value: props.ai.model, label: props.ai.model }, ...AI_MODELS];
   let canvas!: HTMLCanvasElement;
   let stage!: HTMLDivElement;
   let pdfData: ArrayBuffer | null = null;
@@ -246,10 +259,26 @@ export function DiagramEditor(props: DiagramEditorProps) {
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   };
 
+  /**
+   * Follows the pointer on the window until it's released. (Not pointer capture: that sends the
+   * click and double-click that follow to the stage, so a node's double-click never got to it.)
+   */
+  function follow() {
+    const up = (e: PointerEvent) => { unfollow(); onUp(e); };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", up);
+    unfollow = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", up);
+      unfollow = () => {};
+    };
+  }
+  let unfollow = () => {};
+  onCleanup(() => unfollow());
+
   function onStageDown(e: PointerEvent) {
     if (!live() || aiBusy() || e.button !== 0) return;
     const p = pos(e);
-    stage.setPointerCapture(e.pointerId);
     if (tool() === "select") {
       setSelected(null);
       return;
@@ -260,6 +289,7 @@ export function DiagramEditor(props: DiagramEditorProps) {
       return;
     }
     setDrag({ kind: "create", tool: tool(), start: p, now: p });
+    follow();
   }
   function onItemDown(e: PointerEvent, item: Item, index?: number) {
     if (tool() !== "select" || !live() || aiBusy() || e.button !== 0) return;
@@ -267,9 +297,9 @@ export function DiagramEditor(props: DiagramEditorProps) {
     setSelected(item.id);
     if (!movable(item)) return;
     const p = pos(e);
-    stage.setPointerCapture(e.pointerId);
     // ⌥-dragging one of a path's points moves the whole path.
     setDrag(index === undefined || e.altKey ? { kind: "item", item, start: p, now: p } : { kind: "point", item, index, start: p, now: p });
+    follow();
   }
   function onMove(e: PointerEvent) {
     const d = drag();
@@ -349,6 +379,8 @@ export function DiagramEditor(props: DiagramEditorProps) {
   function onKey(e: KeyboardEvent) {
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.key === "Enter") { e.preventDefault(); props.onDone(src()); return; }
+    // ⌘F anywhere in the window searches the code (in the code itself, its own keymap already did).
+    if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f" && !e.defaultPrevented && codeView) { e.preventDefault(); openFind(codeView); return; }
     if (typing(e)) return;
     if (mod && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
     if (mod) return;
@@ -368,9 +400,12 @@ export function DiagramEditor(props: DiagramEditorProps) {
   }
   let dialog!: HTMLDivElement;
   let code!: HTMLDivElement;
+  let codeView: EditorView | undefined;
+  let askView: EditorView | undefined;
   onMount(() => {
-    // Take the keys from the text editor (it keeps focus when a snippet or its hover button opens this).
-    dialog.focus();
+    // Take the focus from the text editor (it keeps it when a snippet or its hover button opens
+    // this): to the Ask box, or else the window, which takes the tools' keys.
+    (askView ?? dialog).focus();
     window.addEventListener("keydown", onKey);
     onCleanup(() => window.removeEventListener("keydown", onKey));
 
@@ -381,7 +416,7 @@ export function DiagramEditor(props: DiagramEditorProps) {
       state: EditorState.create({
         doc: src(),
         extensions: [
-          lineNumbers(), history(), drawSelection(), highlightActiveLine(), bracketMatching(), latexLanguage, syntaxHighlighting(highlight), theme,
+          lineNumbers(), history(), drawSelection(), highlightActiveLine(), bracketMatching(), latexLanguage, syntaxHighlighting(highlight), theme, findReplace,
           EditorView.theme({ ".cm-scroller": { fontSize: "12.5px", lineHeight: "1.55" }, ".cm-content": { padding: "10px 0" } }),
           EditorView.contentAttributes.of({ "aria-label": "TikZ code", spellcheck: "false" }),
           keymap.of([...defaultKeymap, ...historyKeymap]),
@@ -402,8 +437,45 @@ export function DiagramEditor(props: DiagramEditorProps) {
         view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: s }, annotations: Transaction.addToHistory.of(false) });
       }
     });
-    onCleanup(() => view.destroy());
+    codeView = view;
+    props.onCodeView?.(view);
+    onCleanup(() => { props.onCodeView?.(null); codeView = undefined; view.destroy(); });
   });
+
+  /**
+   * The Ask box: LaTeX like the main editor (highlighting and snippets). Enter asks, ⇧Enter is a
+   * new line, Esc goes back to the tools' keys.
+   */
+  function mountAsk(parent: HTMLDivElement) {
+    const editable = new Compartment();
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: request(),
+        extensions: [
+          history(), drawSelection(), bracketMatching(), EditorView.lineWrapping, latexLanguage, syntaxHighlighting(highlight), theme,
+          snippetExtension(props.runtime),
+          editable.of(EditorView.editable.of(true)),
+          placeholder("Ask Claude to change the picture, e.g. “add a node C below B and connect it to A”"),
+          EditorView.theme({
+            "&": { height: "auto" },
+            ".cm-scroller": { fontFamily: "var(--td-ui)", fontSize: "13px", lineHeight: "1.5", minHeight: "3em", maxHeight: "9em" },
+            ".cm-content": { padding: "6px 0", maxWidth: "none" },
+          }),
+          EditorView.contentAttributes.of({ "aria-label": "Ask Claude", spellcheck: "false" }),
+          keymap.of([
+            { key: "Enter", run: () => { void ask(); return true; }, shift: insertNewline },
+            { key: "Escape", run: () => { dialog.focus(); return true; } },
+            ...defaultKeymap, ...historyKeymap,
+          ]),
+          EditorView.updateListener.of((u) => { if (u.docChanged) setRequest(u.state.doc.toString()); }),
+        ],
+      }),
+    });
+    createEffect(() => view.dispatch({ effects: editable.reconfigure(EditorView.editable.of(!aiBusy())) }));
+    askView = view;
+    onCleanup(() => { askView = undefined; view.destroy(); });
+  }
 
   // ---- Claude ----
 
@@ -435,10 +507,10 @@ export function DiagramEditor(props: DiagramEditorProps) {
     setSelected(null);
     try {
       const res = await askClaude(props.host, {
-        settings: props.ai,
+        settings: { ...props.ai, model: model() },
         picture: src(),
         preamble: props.preamble,
-        context: props.context,
+        context: surroundings(props.context, contextLines()),
         request: text,
         image: errors().length ? null : await snapshot().catch(() => null),
         check: async (candidate) => { const b = await build(candidate); return b.cancelled ? [{ line: null, message: "the build was interrupted" }] : b.errors; },
@@ -448,7 +520,7 @@ export function DiagramEditor(props: DiagramEditorProps) {
       const tokens = `${res.usage.input.toLocaleString()} tokens in, ${res.usage.output.toLocaleString()} out`;
       if (res.picture) {
         edit(res.picture);
-        setRequest("");
+        askView?.dispatch({ changes: { from: 0, to: askView.state.doc.length } });
         setAiStatus(`Done · ${tokens}`);
       } else {
         setAiStatus(`${res.error ?? "No answer"}${res.usage.input ? ` · ${tokens}` : ""}`);
@@ -501,7 +573,7 @@ export function DiagramEditor(props: DiagramEditorProps) {
           <div class="dg-canvas-wrap">
             <div
               ref={stage} class={`dg-stage tool-${tool()}`}
-              onPointerDown={onStageDown} onPointerMove={onMove} onPointerUp={onUp}
+              onPointerDown={onStageDown}
             >
               <canvas ref={canvas} class="dg-canvas" />
               <For each={boxes()}>
@@ -583,17 +655,23 @@ export function DiagramEditor(props: DiagramEditorProps) {
               </Show>
             }
           >
-            <textarea
-              class="dg-ask" rows={2} value={request()} disabled={aiBusy()} spellcheck={false}
-              placeholder="Ask Claude to change the picture, e.g. “add a node C below B and connect it to A”"
-              onInput={(e) => setRequest(e.currentTarget.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) { e.preventDefault(); void ask(); } }}
-            />
+            <div class={`dg-ask ${aiBusy() ? "busy" : ""}`} ref={mountAsk} />
             <div class="dg-ai-foot">
-              <span class="dg-ai-status">{aiStatus() ?? `${props.ai.model}`}</span>
+              <span class="dg-ai-status">{aiStatus() ?? ""}</span>
               <Show when={total().input}>
                 <span class="dg-ai-total">This session: {total().input.toLocaleString()} in, {total().output.toLocaleString()} out</span>
               </Show>
+              <label class="dg-ai-opt" title="Lines of the document before and after the picture that Claude sees">
+                Context
+                <input
+                  class="dg-context" type="number" min="0" max="500" value={contextLines()}
+                  onInput={(e) => setContextLines(Math.max(0, Math.floor(Number(e.currentTarget.value)) || 0))}
+                />
+                lines
+              </label>
+              <select class="dg-model" aria-label="Model" onChange={(e) => setModel(e.currentTarget.value)}>
+                <For each={models}>{(m) => <option value={m.value} selected={m.value === model()}>{m.label}</option>}</For>
+              </select>
               <button class="dg-btn primary" disabled={aiBusy() || !request().trim()} onClick={() => void ask()}>{aiBusy() ? "Working…" : "Ask Claude"}</button>
             </div>
           </Show>

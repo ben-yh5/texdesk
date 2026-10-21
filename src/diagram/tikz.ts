@@ -214,11 +214,24 @@ export function pictureAt(doc: string, pos: number): Span | null {
   return pos <= to ? { from, to } : null;
 }
 
-/** Up to `lines` lines of the document before and after `span`. */
-export function surroundings(doc: string, span: Span, lines = 10): { before: string; after: string } {
-  const before = doc.slice(0, span.from).split("\n");
-  const after = doc.slice(span.to).split("\n");
+/** Up to `lines` lines of the document text before and after the picture (plus the rest of the picture's own lines). */
+export function surroundings(text: { before: string; after: string }, lines: number): { before: string; after: string } {
+  const before = text.before.split("\n");
+  const after = text.after.split("\n");
   return { before: before.slice(-lines - 1).join("\n"), after: after.slice(0, lines + 1).join("\n") };
+}
+
+/**
+ * The picture without `indent` (the indentation of the line it starts on) at the start of its
+ * other lines, so it reads as if it started its line. `reindent` puts it back.
+ */
+export function outdent(picture: string, indent: string): string {
+  return picture.split("\n").map((l, i) => (i && l.startsWith(indent) ? l.slice(indent.length) : l)).join("\n");
+}
+
+/** `indent` added to each of the picture's lines after the first (empty ones stay empty). */
+export function reindent(picture: string, indent: string): string {
+  return picture.split("\n").map((l, i) => (i && l ? indent + l : l)).join("\n");
 }
 
 /** A number as TikZ code: at most 3 decimals, no trailing zeros. */

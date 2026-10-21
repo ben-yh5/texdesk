@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addItem, deleteItem, diagramDocument, fmt, freshName, instrument, moveItem, nameItem, parsePicture, pictureAt, preambleOf, readProbes, setPoint, setText, surroundings, toUnits,
+  addItem, deleteItem, diagramDocument, fmt, freshName, instrument, moveItem, nameItem, outdent, parsePicture, pictureAt, preambleOf, readProbes, reindent, setPoint, setText, surroundings, toUnits,
 } from "../src/diagram/tikz";
 
 const PIC = String.raw`\begin{tikzpicture}[scale=2, >=stealth]
@@ -105,12 +105,22 @@ describe("finding the picture", () => {
     expect(pictureAt(doc, 2)).toBeNull();
   });
 
-  it("takes up to 10 lines around the picture as context", () => {
+  it("takes the given number of lines around the picture as context", () => {
     const lines = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => `l${a + i}`).join("\n");
     const text = `${lines(1, 15)}\nx \\begin{tikzpicture}\\end{tikzpicture} y\n${lines(16, 30)}`;
     const span = pictureAt(text, text.indexOf("\\end"))!;
-    expect(surroundings(text, span)).toEqual({ before: `${lines(6, 15)}\nx `, after: ` y\n${lines(16, 25)}` });
-    expect(surroundings("\\begin{tikzpicture}\\end{tikzpicture}", { from: 0, to: 36 })).toEqual({ before: "", after: "" });
+    const around = { before: text.slice(0, span.from), after: text.slice(span.to) };
+    expect(surroundings(around, 10)).toEqual({ before: `${lines(6, 15)}\nx `, after: ` y\n${lines(16, 25)}` });
+    expect(surroundings(around, 0)).toEqual({ before: "x ", after: " y" });
+    expect(surroundings({ before: "", after: "" }, 5)).toEqual({ before: "", after: "" });
+  });
+
+  it("takes an indented picture's indentation off its lines, and puts it back", () => {
+    const pic = "\\begin{tikzpicture}\n    \\node {a};\n\n  \\end{tikzpicture}";
+    expect(outdent(pic, "  ")).toBe("\\begin{tikzpicture}\n  \\node {a};\n\n\\end{tikzpicture}");
+    expect(reindent(outdent(pic, "  "), "  ")).toBe(pic);
+    // A rewritten picture (e.g. Claude's) gets the indentation of the line it's on.
+    expect(reindent("\\begin{tikzpicture}\n  \\draw (0,0) -- (1,1);\n\\end{tikzpicture}", "\t")).toBe("\\begin{tikzpicture}\n\t  \\draw (0,0) -- (1,1);\n\t\\end{tikzpicture}");
   });
 
   it("takes the preamble before \\begin{document}", () => {

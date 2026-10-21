@@ -6,7 +6,8 @@ import { currentCompletions, setSelectedCompletion } from "@codemirror/autocompl
 import { App } from "../src/app/App";
 import { formatWorkspace, emptyWorkspace, type WorkspaceFile } from "../src/workspace/model";
 import { STARTERS } from "../src/workspace/starters";
-import { fixtureFiles, memoryHost, settle, type } from "./helpers";
+import { fixtureFiles, memoryHost, press, settle, type } from "./helpers";
+import { closeSearchPanel } from "@codemirror/search";
 import { forEachDiagnostic } from "@codemirror/lint";
 import type { Anchor, Viewer, ViewerFactory } from "../src/preview/viewer";
 import type { PdfLocation } from "../src/preview/synctex";
@@ -1149,13 +1150,62 @@ describe("Phase 6: settings", () => {
     [...off.querySelectorAll<HTMLElement>("button")].find((x) => x.textContent === "Allow Keychain access")!.click();
     await waitFor(() => dg.querySelector(".dg-ask"));
     expect(b.host.ai.retries).toBe(1);
-    // Typing in the code goes back into the file with Done.
+    // The code shows the picture as if it started its line; typing there goes back into the
+    // file with Done, at the picture's indentation.
     const code = EditorView.findFromDOM(dg.querySelector<HTMLElement>(".dg-code .cm-editor")!)!;
+    expect(code.state.doc.toString()).toBe("\\begin{tikzpicture}\n\\end{tikzpicture}");
     const at = code.state.doc.toString().indexOf("\\end{tikzpicture}");
-    code.dispatch({ changes: { from: at, insert: "\\draw (0,0) -- (1,1);\n" }, userEvent: "input" });
+    code.dispatch({ changes: { from: at, insert: "  \\draw (0,0) -- (1,1);\n" }, userEvent: "input" });
     [...dg.querySelectorAll<HTMLElement>("button")].find((x) => x.textContent === "Done")!.click();
     await waitFor(() => !b.root.querySelector(".dg"));
-    expect(b.editor()!.state.doc.toString()).toContain("\\begin{tikzpicture}\n  \\draw (0,0) -- (1,1);\n\\end{tikzpicture}");
+    expect(b.editor()!.state.doc.toString()).toMatch(/\\begin\{center\}\n  \\begin\{tikzpicture\}\n    \\draw \(0,0\) -- \(1,1\);\n  \\end\{tikzpicture\}\n\\end\{center\}$/);
+  });
+
+  it("the diagram editor's Ask box is focused on open, has LaTeX snippets, and picks the model and how many lines of context", async () => {
+    const doc = "\\documentclass{article}\n\\begin{document}\nfar\nnear\n\\begin{tikzpicture}\n\\node at (0,0) {A};\n\\end{tikzpicture}\nbelow\n\\end{document}";
+    const b = await boot({ ...workspace, [hw]: doc, [`${SNIPS}/mine.ts`]: 'import { s } from "texdesk"; export default [s("qq", "Q", { auto: true })];' }, hw);
+    await waitFor(() => b.editor()?.state.doc.length);
+    Object.assign(b.host.ai, { key: "sk-ant-x", respond: () => ({ content: [{ type: "text", text: "no picture" }], stop_reason: "end_turn" }) });
+    b.editor()!.dispatch({ selection: { anchor: doc.indexOf("\\node") } });
+    await b.command("Edit diagram");
+    const dg = await waitFor(() => b.root.querySelector<HTMLElement>(".dg"));
+    const ask = EditorView.findFromDOM(await waitFor(() => dg.querySelector<HTMLElement>(".dg-ask .cm-editor")))!;
+    await waitFor(() => ask.hasFocus);
+    // (once the snippet has loaded)
+    await waitFor(() => { ask.dispatch({ changes: { from: 0, to: ask.state.doc.length, insert: "make " }, selection: { anchor: 5 } }); type(ask, "qq"); return ask.state.doc.toString() === "make Q"; });
+    type(ask, " bigger");
+    const model = dg.querySelector<HTMLSelectElement>(".dg-model")!;
+    expect(model.value).toBe("claude-haiku-5-5");
+    model.value = "claude-opus-5-5";
+    model.dispatchEvent(new Event("change", { bubbles: true }));
+    const lines = dg.querySelector<HTMLInputElement>(".dg-context")!;
+    expect(lines.value).toBe("5");
+    lines.value = "1";
+    lines.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    press(ask, "Enter");
+    await waitFor(() => b.host.ai.requests.length);
+    const req = b.host.ai.requests[0] as { model: string; messages: { content: { text?: string }[] }[] };
+    expect(req.model).toBe("claude-opus-5-5");
+    const texts = req.messages[0].content.map((c) => c.text ?? "");
+    expect(texts.find((t) => t.startsWith("The text around"))).toContain("near\n[the picture]\nbelow\n```");
+    expect(texts.join("\n")).not.toContain("far");
+    expect(texts.join("\n")).toContain("Change it like this: make Q bigger");
+  });
+
+  it("⌘F in the diagram editor searches its code, from the keyboard or the menu", async () => {
+    const b = await boot(workspace, hw);
+    await waitFor(() => b.editor()?.state.doc.length);
+    b.editor()!.dispatch({ selection: { anchor: b.editor()!.state.doc.length } });
+    await b.command("New diagram");
+    const dg = await waitFor(() => b.root.querySelector<HTMLElement>(".dg"));
+    const code = EditorView.findFromDOM(await waitFor(() => dg.querySelector<HTMLElement>(".dg-code .cm-editor")))!;
+    b.key("f", { metaKey: true });
+    await waitFor(() => dg.querySelector(".dg-code .cm-search"));
+    closeSearchPanel(code);
+    expect(dg.querySelector(".dg-code .cm-search")).toBeNull();
+    b.host.menu.select("find");
+    await waitFor(() => dg.querySelector(".dg-code .cm-search"));
+    expect(b.editor()!.dom.querySelector(".cm-search")).toBeNull();
   });
 
   it("Hotkeys: click a shortcut, press the new keys, and it's live", async () => {

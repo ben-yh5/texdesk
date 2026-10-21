@@ -5,7 +5,7 @@
 // overrides is marked, with a button to go back to the global value.
 
 import { For, JSX, Show, createSignal, onCleanup } from "solid-js";
-import { CommandId, DEFAULT_KEYS, Raw, WorkspaceConfig, defaultConfig, hasSettingKey } from "../workspace/config";
+import { AI_MODELS, CommandId, DEFAULT_KEYS, Raw, WorkspaceConfig, defaultConfig, hasSettingKey } from "../workspace/config";
 import type { AiKeyStatus } from "../host/types";
 import { formatKey, isMac } from "./keys";
 import { PluginsPane, PluginsPaneProps } from "./PluginsPane";
@@ -79,7 +79,7 @@ export const SECTIONS: { id: string; label: string; settings: Setting[] }[] = [
     id: "ai", label: "AI", settings: [
       {
         table: "ai", key: "model", label: "Model", desc: "The Claude model the diagram editor asks. Haiku is the cheapest; Sonnet and Opus are better at layout.", type: "select",
-        options: [{ value: "claude-haiku-5-5", label: "Claude Haiku 5.5" }, { value: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" }, { value: "claude-opus-5-5", label: "Claude Opus 5.5" }], ...ai("model"),
+        options: AI_MODELS, ...ai("model"),
       },
       {
         table: "ai", key: "effort", label: "Effort", desc: "How much Claude thinks before answering. Higher is slower and uses more tokens.", type: "select",

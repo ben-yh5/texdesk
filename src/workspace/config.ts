@@ -64,6 +64,13 @@ export interface BuildSettings {
   autoCompileDelayMs: number;
 }
 
+/** The models to pick from in Settings → AI and the diagram editor. */
+export const AI_MODELS = [
+  { value: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
+  { value: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
+  { value: "claude-opus-5-5", label: "Claude Opus 5.5" },
+];
+
 /** The diagram editor's Claude requests (the API key itself is in the Keychain, not here). */
 export interface AiSettings {
   model: string;

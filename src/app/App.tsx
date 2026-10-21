@@ -50,7 +50,7 @@ import { foldAll, unfoldAll } from "@codemirror/language";
 import { knownCommandNames } from "../editor/commands";
 import { Fix, RuleFix, ruleFix } from "../compile/fixes";
 import { DiagramEditor } from "../diagram/DiagramEditor";
-import { pictureAt, preambleOf, surroundings } from "../diagram/tikz";
+import { outdent, pictureAt, preambleOf, reindent } from "../diagram/tikz";
 import { setDiagnostics, type Diagnostic } from "@codemirror/lint";
 import { Workbench, DropTarget, TabLabel } from "./Workbench";
 import { PdfPane, PdfPaneApi } from "./PdfPane";
@@ -2355,11 +2355,15 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   /** The picture open in the diagram editor: where it is in its file, and what building it needs. */
   const [diagram, setDiagram] = createSignal<{
     file: string; from: number; to: number; picture: string; preamble: string; searchPaths: string[];
-    /** The lines around the picture, for Claude. */
+    /** The indentation of the line the picture starts on (taken off its other lines while it's edited). */
+    indent: string;
+    /** The document text before and after the picture, for Claude. */
     context: { before: string; after: string };
     /** Just inserted, by New diagram or the tikz snippet (Cancel takes it out again). */
     fresh: boolean;
   } | null>(null);
+  /** The diagram editor's code, while it's open: Find (⌘F in the menu) searches there. */
+  let diagramCode: EditorView | null = null;
 
   /**
    * Opens the tikzpicture around the cursor (or `at`) in the diagram editor. `insert` inserts an
@@ -2386,14 +2390,18 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     }
     // The root document's folder too, for an \input in its preamble (when the picture is in an included file).
     const searchPaths = [...(root && root !== p ? [dirname(root)] : []), ...await builder.searchPaths(root ?? p).catch(() => [] as string[])];
-    setDiagram({ file: p, ...span, picture: doc.slice(span.from, span.to), context: surroundings(doc, span), preamble, searchPaths, fresh: !!(o.insert || o.inserted) });
+    const indent = /^[ \t]*/.exec(doc.slice(doc.lastIndexOf("\n", span.from - 1) + 1, span.from))![0];
+    setDiagram({
+      file: p, ...span, picture: doc.slice(span.from, span.to), indent, context: { before: doc.slice(0, span.from), after: doc.slice(span.to) },
+      preamble, searchPaths, fresh: !!(o.insert || o.inserted),
+    });
   }
 
   // The tikz snippet's picture opens in the diagram editor.
   runtime.onCommand = (command) => { if (command === "edit_diagram") void editDiagram({ inserted: true }); };
 
   /** Puts the diagram editor's picture back where it came from (found again if the file changed meanwhile). */
-  function finishDiagram(picture: string) {
+  function finishDiagram(edited: string) {
     const d = diagram();
     setDiagram(null);
     if (!d || !view || path() !== d.file) { if (d) say("The file with the picture isn't open any more, so the change was dropped", true); return; }
@@ -2405,6 +2413,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       from = i;
       to = i + d.picture.length;
     }
+    const picture = reindent(edited, d.indent);
     if (picture !== d.picture) view.dispatch({ changes: { from, to, insert: picture }, annotations: isolateHistory.of("full"), userEvent: "input" });
     view.focus();
   }
@@ -2990,8 +2999,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     { id: "save", label: "Save", hint: "⌘S", accel: "Mod-s", run: saveCommand, when: hasFile, needs: "an open file" },
     { id: "undo", label: "Undo", accel: "Mod-z", run: () => editHistory("undo"), palette: false },
     { id: "redo", label: "Redo", accel: "Mod-Shift-z", run: () => editHistory("redo"), palette: false },
-    { id: "find", label: "Find", hint: "⌘F", accel: "Mod-f", run: () => { if (view) openFind(view); }, when: hasFile, needs: "an open file" },
-    { id: "replace", label: "Find and replace", hint: "⌥⌘F", accel: "Mod-Alt-f", run: () => { if (view) openFind(view, true); }, when: hasFile, needs: "an open file" },
+    { id: "find", label: "Find", hint: "⌘F", accel: "Mod-f", run: () => { const v = diagramCode ?? view; if (v) openFind(v); }, when: hasFile, needs: "an open file" },
+    { id: "replace", label: "Find and replace", hint: "⌥⌘F", accel: "Mod-Alt-f", run: () => { const v = diagramCode ?? view; if (v) openFind(v, true); }, when: hasFile, needs: "an open file" },
     { id: "follow_edits", label: "Toggle PDF follows editor", run: toggleFollowEdits },
     { id: "toggle_pdf", label: "Toggle PDF", key: "toggle_pdf", run: togglePreview },
     { id: "close_tab", label: "Close tab", key: "close_tab", run: () => { const t = frontTab(); if (t) void closeTab(t.id); }, when: () => !!frontTab(), needs: "an open tab" },
@@ -3646,13 +3655,15 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         {(d) => (
           <DiagramEditor
             host={host}
-            picture={d().picture}
+            picture={outdent(d().picture, d().indent)}
             preamble={d().preamble}
             context={d().context}
             docDir={dirname(d().file)}
             searchPaths={d().searchPaths}
             tectonic={config().tectonic}
             ai={config().ai}
+            runtime={runtime}
+            onCodeView={(v) => { diagramCode = v; }}
             onDone={finishDiagram}
             onCancel={() => {
               const { fresh, file } = d();
