@@ -1179,7 +1179,7 @@ describe("Phase 6: settings", () => {
     model.value = "claude-opus-5-5";
     model.dispatchEvent(new Event("change", { bubbles: true }));
     const lines = dg.querySelector<HTMLInputElement>(".dg-context")!;
-    expect(lines.value).toBe("5");
+    expect(lines.value).toBe("10");
     lines.value = "1";
     lines.dispatchEvent(new InputEvent("input", { bubbles: true }));
     press(ask, "Enter");
@@ -1190,6 +1190,23 @@ describe("Phase 6: settings", () => {
     expect(texts.find((t) => t.startsWith("The text around"))).toContain("near\n[the picture]\nbelow\n```");
     expect(texts.join("\n")).not.toContain("far");
     expect(texts.join("\n")).toContain("Change it like this: make Q bigger");
+  });
+
+  it("⇧Enter in the diagram editor is Done, from the code or the Ask box", async () => {
+    const b = await boot(workspace, hw);
+    await waitFor(() => b.editor()?.state.doc.length);
+    Object.assign(b.host.ai, { key: "sk-ant-x" });
+    for (const from of [".dg-code", ".dg-ask"]) {
+      b.editor()!.dispatch({ selection: { anchor: b.editor()!.state.doc.length } });
+      await b.command("New diagram");
+      const dg = await waitFor(() => b.root.querySelector<HTMLElement>(".dg"));
+      const code = EditorView.findFromDOM(await waitFor(() => dg.querySelector<HTMLElement>(".dg-code .cm-editor")))!;
+      const at = code.state.doc.toString().indexOf("\\end{tikzpicture}");
+      code.dispatch({ changes: { from: at, insert: `  \\node {${from}};\n` }, userEvent: "input" });
+      press(EditorView.findFromDOM(await waitFor(() => dg.querySelector<HTMLElement>(`${from} .cm-editor`)))!, "Shift-Enter");
+      await waitFor(() => !b.root.querySelector(".dg"));
+      expect(b.editor()!.state.doc.toString()).toContain(`\\node {${from}};`);
+    }
   });
 
   it("⌘F in the diagram editor searches its code, from the keyboard or the menu", async () => {

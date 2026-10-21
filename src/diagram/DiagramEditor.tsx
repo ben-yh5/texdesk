@@ -8,7 +8,7 @@ import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { Compartment, EditorState, Transaction } from "@codemirror/state";
 import { EditorView, drawSelection, highlightActiveLine, keymap, lineNumbers, placeholder } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap, insertNewline } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { bracketMatching, syntaxHighlighting } from "@codemirror/language";
 import { latexLanguage } from "../editor/codeblocks";
 import { findReplace, openFind } from "../editor/search";
@@ -31,7 +31,7 @@ const PT_PER_BP = 72.27 / 72;
 /** Widest image sent to Claude, in pixels. */
 const AI_IMAGE_WIDTH = 800;
 /** Lines of the document before and after the picture sent to Claude, unless changed in the window. */
-const CONTEXT_LINES = 5;
+const CONTEXT_LINES = 10;
 
 export interface DiagramEditorProps {
   host: Host;
@@ -382,6 +382,7 @@ export function DiagramEditor(props: DiagramEditorProps) {
     // ⌘F anywhere in the window searches the code (in the code itself, its own keymap already did).
     if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f" && !e.defaultPrevented && codeView) { e.preventDefault(); openFind(codeView); return; }
     if (typing(e)) return;
+    if (e.shiftKey && e.key === "Enter") { e.preventDefault(); props.onDone(src()); return; }
     if (mod && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
     if (mod) return;
     const item = selectedItem();
@@ -401,6 +402,8 @@ export function DiagramEditor(props: DiagramEditorProps) {
   let dialog!: HTMLDivElement;
   let code!: HTMLDivElement;
   let codeView: EditorView | undefined;
+  /** ⇧Enter in the code or the Ask box: Done (elsewhere in the window, onKey takes it). */
+  const doneKey = { key: "Shift-Enter", run: () => { props.onDone(src()); return true; } };
   let askView: EditorView | undefined;
   onMount(() => {
     // Take the focus from the text editor (it keeps it when a snippet or its hover button opens
@@ -417,9 +420,9 @@ export function DiagramEditor(props: DiagramEditorProps) {
         doc: src(),
         extensions: [
           lineNumbers(), history(), drawSelection(), highlightActiveLine(), bracketMatching(), latexLanguage, syntaxHighlighting(highlight), theme, findReplace,
-          EditorView.theme({ ".cm-scroller": { fontSize: "12.5px", lineHeight: "1.55" }, ".cm-content": { padding: "10px 0" } }),
+          EditorView.theme({ ".cm-scroller": { fontSize: "11.5px", lineHeight: "1.5" }, ".cm-content": { padding: "8px 0" } }),
           EditorView.contentAttributes.of({ "aria-label": "TikZ code", spellcheck: "false" }),
-          keymap.of([...defaultKeymap, ...historyKeymap]),
+          keymap.of([doneKey, ...defaultKeymap, ...historyKeymap]),
           EditorView.domEventHandlers({
             focus: () => { undoStack.push(src()); },
             blur: () => { if (undoStack[undoStack.length - 1] === src()) undoStack.pop(); },
@@ -443,8 +446,8 @@ export function DiagramEditor(props: DiagramEditorProps) {
   });
 
   /**
-   * The Ask box: LaTeX like the main editor (highlighting and snippets). Enter asks, ⇧Enter is a
-   * new line, Esc goes back to the tools' keys.
+   * The Ask box: LaTeX like the main editor (highlighting and snippets). Enter asks, ⇧Enter is
+   * Done, Esc goes back to the tools' keys.
    */
   function mountAsk(parent: HTMLDivElement) {
     const editable = new Compartment();
@@ -459,12 +462,13 @@ export function DiagramEditor(props: DiagramEditorProps) {
           placeholder("Ask Claude to change the picture, e.g. “add a node C below B and connect it to A”"),
           EditorView.theme({
             "&": { height: "auto" },
-            ".cm-scroller": { fontFamily: "var(--td-ui)", fontSize: "13px", lineHeight: "1.5", minHeight: "3em", maxHeight: "9em" },
-            ".cm-content": { padding: "6px 0", maxWidth: "none" },
+            ".cm-scroller": { fontFamily: "var(--td-ui)", fontSize: "12.5px", lineHeight: "1.45", maxHeight: "6em" },
+            ".cm-content": { padding: "4px 0", maxWidth: "none" },
           }),
           EditorView.contentAttributes.of({ "aria-label": "Ask Claude", spellcheck: "false" }),
           keymap.of([
-            { key: "Enter", run: () => { void ask(); return true; }, shift: insertNewline },
+            doneKey,
+            { key: "Enter", run: () => { void ask(); return true; } },
             { key: "Escape", run: () => { dialog.focus(); return true; } },
             ...defaultKeymap, ...historyKeymap,
           ]),
@@ -567,7 +571,7 @@ export function DiagramEditor(props: DiagramEditorProps) {
           </button>
           <span class="dg-sep" />
           <button class="dg-btn" onClick={props.onCancel}>Cancel</button>
-          <button class="dg-btn primary" onClick={() => props.onDone(src())} title="Put the picture in the file (⌘↩)">Done</button>
+          <button class="dg-btn primary" onClick={() => props.onDone(src())} title="Put the picture in the file (⇧↩ or ⌘↩)">Done</button>
         </div>
         <div class="dg-main">
           <div class="dg-canvas-wrap">
