@@ -234,9 +234,12 @@ const badgeTheme = EditorView.baseTheme({
   ".cm-jump-badge .cm-jump-label": { position: "absolute", left: "0", bottom: "0", transform: "translateX(-50%)", whiteSpace: "nowrap", zIndex: "2" },
   ".cm-jump-badge-end .cm-jump-label": { transform: "none", left: "0.4em" },
   ".cm-jump-label": {
+    // An indented line's hanging indent (wrapindent.ts) sets a negative text-indent, which an inline-block inherits.
+    textIndent: "0",
     display: "inline-block", padding: "0 0.4em", borderRadius: "4px", fontFamily: "var(--td-ui, system-ui)",
-    fontSize: "0.75em", fontWeight: "600", lineHeight: "1.5", color: "#fff", backgroundColor: "var(--td-accent, #4a6cf7)",
-    userSelect: "none",
+    // The text and background colours swapped, with a ring of background, so it reads as a sticker over the text.
+    fontSize: "0.8em", fontWeight: "700", lineHeight: "1.4", color: "var(--td-bg, #fff)", backgroundColor: "var(--td-fg, #24262b)",
+    boxShadow: "0 0 0 1.5px var(--td-bg, #fff)", userSelect: "none",
   },
   // Popups (the math preview) would cover the numbers, and jump out's ↵ would sit under one.
   "&.cm-jump-labels-on .cm-tooltip, &.cm-jump-labels-on .cm-jumpout-landing": { visibility: "hidden" },
