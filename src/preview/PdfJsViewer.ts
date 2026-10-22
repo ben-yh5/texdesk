@@ -51,6 +51,10 @@ export class PdfJsViewer implements Viewer {
   private resizeObs: ResizeObserver;
   private lastWidth = 0;
   private generation = 0;
+  /** Where it was scrolled to while last shown: hidden (display: none), nothing can be measured. */
+  private kept: Anchor | null = null;
+  /** A PDF loaded while hidden, laid out once shown. */
+  private waiting: { data: ArrayBuffer; anchor: Anchor | null } | null = null;
 
   constructor(container: HTMLElement) {
     this.scroller = document.createElement("div");
@@ -58,6 +62,7 @@ export class PdfJsViewer implements Viewer {
     container.append(this.scroller);
     this.resizeObs = new ResizeObserver(() => this.onResize());
     this.resizeObs.observe(this.scroller);
+    this.scroller.addEventListener("scroll", () => { if (this.shown()) this.kept = this.anchor(); });
     this.scroller.addEventListener("dblclick", (e) => this.sync(e));
     this.scroller.addEventListener("click", (e) => { if (e.metaKey || e.ctrlKey) this.sync(e); });
     this.scroller.tabIndex = -1;
@@ -162,7 +167,10 @@ export class PdfJsViewer implements Viewer {
     this.zoomLabel.textContent = `${Math.round((this.pending?.zoom ?? this.zoom) * 100)}%`;
   }
 
+  private shown() { return this.scroller.clientWidth > 0; }
+
   anchor(): Anchor | null {
+    if (!this.shown()) return this.waiting?.anchor ?? this.kept;
     if (!this.pages.length) return null;
     const top = this.scroller.scrollTop;
     for (let i = 0; i < this.pages.length; i++) {
@@ -177,6 +185,7 @@ export class PdfJsViewer implements Viewer {
   async load(data: ArrayBuffer, anchor?: Anchor | null): Promise<void> {
     const gen = ++this.generation;
     const keep = anchor ?? this.anchor();
+    if (!this.shown()) { this.waiting = { data, anchor: keep }; return; }
     const doc = await pdfjs.getDocument({ data: new Uint8Array(data) }).promise;
     if (gen !== this.generation) { void doc.loadingTask.destroy(); return; }
     if (anchor?.zoom) { this.zoom = clampZoom(anchor.zoom); this.showZoom(); }
@@ -235,6 +244,7 @@ export class PdfJsViewer implements Viewer {
     this.shift = { t: 1, x: 0, y: 0 };
     const target = pages[first].el;
     this.scroller.scrollTop = target.offsetTop + (keep?.fraction ?? 0) * target.offsetHeight;
+    this.kept = this.anchor();
     if (old && old !== doc) void old.loadingTask.destroy();
 
     this.observer = new IntersectionObserver((entries) => {
@@ -366,9 +376,16 @@ export class PdfJsViewer implements Viewer {
   private resizeTimer: ReturnType<typeof setTimeout> | undefined;
   private onResize() {
     const w = this.scroller.clientWidth;
+    if (!w) return;
+    if (this.waiting) {
+      const { data, anchor } = this.waiting;
+      this.waiting = null;
+      void this.load(data, anchor);
+      return;
+    }
     if (!this.doc || Math.abs(w - this.lastWidth) < 4) return;
     clearTimeout(this.resizeTimer);
-    this.resizeTimer = setTimeout(() => void this.layout(this.doc!, this.anchor(), ++this.generation), 120);
+    this.resizeTimer = setTimeout(() => { if (this.shown()) void this.layout(this.doc!, this.anchor(), ++this.generation); }, 120);
   }
 
   destroy() {

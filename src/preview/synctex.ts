@@ -19,6 +19,11 @@ export interface SyncTex {
   inputs: Map<number, string>;
   /** Records per page (1-based page → records in file order). */
   pages: Map<number, SyncRecord[]>;
+  /**
+   * The line TeX was reading when it shipped out each page. The page's frame (header, footer)
+   * is stamped with it, though the line itself is usually on the next page.
+   */
+  shippedAt: Map<number, number>;
 }
 
 const SP_PER_BP = 65781.76;
@@ -27,6 +32,7 @@ const RECORD = /^([(hvxkg$[])(\d+),(\d+)(?:,\d+)?:(-?\d+),(-?\d+)(?::(-?\d+)(?:,
 export function parseSynctex(text: string): SyncTex {
   const inputs = new Map<number, string>();
   const pages = new Map<number, SyncRecord[]>();
+  const shippedAt = new Map<number, number>();
   let unit = 1, mag = 1000, xOff = 0, yOff = 0;
   let page = 0;
   let content = false;
@@ -54,6 +60,7 @@ export function parseSynctex(text: string): SyncTex {
     if (!page) continue;
     const m = RECORD.exec(line);
     if (!m) continue;
+    if (!shippedAt.has(page)) shippedAt.set(page, +m[3]);
     const k = m[1];
     if (k === "[" || k === "v") continue; // vertical boxes span whole regions; not useful for lookup
     const scale = (unit * mag) / 1000 / SP_PER_BP;
@@ -69,7 +76,7 @@ export function parseSynctex(text: string): SyncTex {
       d: m[8] !== undefined ? +m[8] * scale : 0,
     });
   }
-  return { inputs, pages };
+  return { inputs, pages, shippedAt };
 }
 
 /** Compare paths, tolerating macOS's /private prefix and `./` relative inputs. */
@@ -120,9 +127,11 @@ export function forwardSearchAll(sync: SyncTex, file: string, line: number, base
 
   const out: PdfLocation[] = [];
   const pages = [...sync.pages.keys()].sort((a, b) => a - b);
-  for (const p of pages) {
+  const on = pages.filter((p) => sync.pages.get(p)!.some((r) => ids.has(r.input) && r.line === target));
+  for (const p of on) {
+    // Only its page's frame, unless it's on no other page.
+    if (sync.shippedAt.get(p) === target && on.length > 1) continue;
     const recs = sync.pages.get(p)!.filter((r) => ids.has(r.input) && r.line === target);
-    if (!recs.length) continue;
     // Prefer the leaf records (actual content on that line); use their row's box for size.
     const leaves = recs.filter((r) => r.kind === "leaf");
     const anchor = leaves[0] ?? recs[0];

@@ -42,6 +42,14 @@ describe("forward search (source → PDF)", () => {
     expect(all.map((l) => l.page)).toEqual([1, 2]);
     expect(all[0].line).toBe(4);
   });
+  it("skips the page TeX was finishing when it read the line (its header and footer carry that line too)", () => {
+    // Real Tectonic output for tests/fixtures/pagebreak.tex: a list running over three pages.
+    const pb = parseSynctex(fs.readFileSync(path.join(__dirname, "fixtures", "pagebreak.synctex"), "utf8"));
+    const FILE2 = "/W/hw/pagebreak.tex";
+    expect(forwardSearchAll(pb, FILE2, 36, DIR).map((l) => l.page)).toEqual([2]); // TeX had read on to item 32 when page 1 went out
+    expect(forwardSearchAll(pb, FILE2, 64, DIR).map((l) => l.page)).toEqual([3]);
+    expect(forwardSearchAll(pb, FILE2, 31, DIR).map((l) => l.page)).toEqual([1]);
+  });
   it("returns null for files not in the document", () => {
     expect(forwardSearch(sync, "/W/hw/other.tex", 4, DIR)).toBe(null);
   });
