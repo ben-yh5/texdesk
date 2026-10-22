@@ -94,7 +94,7 @@ export function normalize(p: string): string {
 export function resolveLink(ref: Pick<LinkRef, "command" | "target">, fromFile: string, ctx: ResolveContext): Resolved | null {
   let target = ref.target;
   if (isUrl(target)) return { kind: "url", url: target };
-  target = target.replace(/^file:(\/\/)?/i, "").replace(/#.*$/, "").replace(/\\([%#&_ ])/g, "$1");
+  target = target.replace(/^file:(\/\/)?/i, "").replace(/\\?#.*$/, "").replace(/\\([%&_ ])/g, "$1");
   if (target.startsWith("~/") || !target) return null;
   const exts = EXTENSIONS[ref.command];
   // `../x` is relative to the file only. Other relative paths can also be found the way
@@ -177,6 +177,53 @@ export function outgoingLinks(text: string, fromFile: string, ctx: ResolveContex
   return out;
 }
 
+/** The heading a link points at: the part after `#` (written `\#` in a \link), unescaped; null if none. */
+export function linkAnchor(target: string): string | null {
+  const m = /\\?#(.*)$/.exec(target);
+  return m ? m[1].replace(/\\([%#&_ ])/g, "$1").trim() : null;
+}
+
+const HEADING = /\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\s*(?:\[[^\]\n]*\])?\s*\{/g;
+
+/** Plain text of a heading's title: `Gradient \emph{descent} for $f$` → `Gradient descent for f`. */
+export function plainTitle(tex: string): string {
+  return tex
+    .replace(/\\([%#&_$])/g, "$1")
+    .replace(/\\[A-Za-z]+\*?\s*/g, "")
+    .replace(/[{}$~\\]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Headings in `text` (\section{…} and the like, not in comments), as plain titles with 1-based lines. */
+export function findHeadings(text: string): { title: string; line: number }[] {
+  const out: { title: string; line: number }[] = [];
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const code = lines[i].slice(0, commentStart(lines[i]));
+    for (const m of code.matchAll(HEADING)) {
+      // The title runs to the matching brace (on this line).
+      let depth = 1;
+      let j = m.index! + m[0].length;
+      const start = j;
+      for (; j < code.length && depth; j++) {
+        if (code[j] === "\\") j++;
+        else if (code[j] === "{") depth++;
+        else if (code[j] === "}") depth--;
+      }
+      const title = plainTitle(code.slice(start, depth ? j : j - 1));
+      if (title) out.push({ title, line: i + 1 });
+    }
+  }
+  return out;
+}
+
+/** The 1-based line of the heading in `text` called `anchor` (ignoring case and spacing), or null. */
+export function headingLine(text: string, anchor: string): number | null {
+  const want = plainTitle(anchor).toLowerCase();
+  return findHeadings(text).find((h) => h.title.toLowerCase() === want)?.line ?? null;
+}
+
 /** The target text for a new `\link` from `fromFile` to `target`: relative, and without `.tex`. */
 export function linkTargetFor(fromFile: string, target: string): string {
   const from = dirname(fromFile).split("/").filter(Boolean);
@@ -189,14 +236,15 @@ export function linkTargetFor(fromFile: string, target: string): string {
 
 /** App-owned package providing `\link`; written to `.texdesk/tex/` and put on the build's search path. */
 export const TEXDESK_STY = String.raw`\NeedsTeXFormat{LaTeX2e}
-\ProvidesPackage{texdesk}[2026/10/06 TeXdesk links]
+\ProvidesPackage{texdesk}[2026/10/22 TeXdesk links]
 % Written by TeXdesk (refreshed automatically; don't edit). TeXdesk adds this folder to
 % every build's search path, so \usepackage{texdesk} works in any document.
 %
 % \link[label]{target}: a link to another file, e.g. \link{lecture3} or
 % \link[Problem set 2]{../hw/hw2.tex}. Cmd-click it in the editor, or click it in the
 % PDF preview, to open the target. A bare name finds that .tex file anywhere in the
-% workspace. Without a label it shows the file name (minus .tex); a URL shows as-is.
+% workspace; \link{lecture3\#Gradient descent} opens it at that heading. Without a label
+% it shows the file name (minus .tex) and heading; a URL shows as-is.
 %
 % hyperref is loaded at the end of the preamble unless the document loads it itself, so
 % your own hyperref options never clash.
@@ -207,25 +255,39 @@ export const TEXDESK_STY = String.raw`\NeedsTeXFormat{LaTeX2e}
 \ExplSyntaxOn
 \str_new:N \l__texdesk_label_str
 \str_new:N \l__texdesk_target_str
+\str_new:N \l__texdesk_anchor_str
 \seq_new:N \l__texdesk_parts_seq
-\cs_new_protected:Npn \__texdesk_stem:n #1
+\str_const:Nx \c__texdesk_escaped_hash_str { \c_backslash_str \c_hash_str }
+\str_const:Nx \c__texdesk_double_hash_str { \c_hash_str \c_hash_str }
+% The label for a target: ../notes/lecture3.tex\#Intro shows as "lecture3 > Intro".
+\cs_new_protected:Npn \__texdesk_stem:
   {
-    \str_set:Nn \l__texdesk_label_str {#1}
+    \str_set_eq:NN \l__texdesk_label_str \l__texdesk_target_str
+    \str_clear:N \l__texdesk_anchor_str
     \str_if_in:NnF \l__texdesk_label_str { : }
       {
+        \exp_args:NNVV \seq_set_split:Nnn \l__texdesk_parts_seq \c_hash_str \l__texdesk_label_str
+        \seq_pop_left:NN \l__texdesk_parts_seq \l__texdesk_label_str
+        \str_set:Nx \l__texdesk_anchor_str { \seq_use:NV \l__texdesk_parts_seq \c_hash_str }
         \seq_set_split:NnV \l__texdesk_parts_seq { / } \l__texdesk_label_str
         \str_set:Nx \l__texdesk_label_str { \seq_item:Nn \l__texdesk_parts_seq { -1 } }
         \str_if_eq:eeT { \str_range:Nnn \l__texdesk_label_str { -4 } { -1 } } { .tex }
           { \str_set:Nx \l__texdesk_label_str { \str_range:Nnn \l__texdesk_label_str { 1 } { -5 } } }
       }
     \str_use:N \l__texdesk_label_str
+    \str_if_empty:NF \l__texdesk_anchor_str
+      { \str_if_empty:NF \l__texdesk_label_str { ~>~ } \str_use:N \l__texdesk_anchor_str }
   }
-% Always a URI link (never hyperref's "other PDF" link), so viewers see the target as written.
+\cs_generate_variant:Nn \seq_use:Nn { NV }
+% Always a URI link (never hyperref's "other PDF" link), so viewers see the target as written
+% (with \# or a bare # turned into #).
 \NewDocumentCommand \link { o m }
   {
     \str_set:Nn \l__texdesk_target_str {#2}
+    \exp_args:NNVV \str_replace_all:Nnn \l__texdesk_target_str \c__texdesk_escaped_hash_str \c_hash_str
+    \exp_args:NNVV \str_replace_all:Nnn \l__texdesk_target_str \c__texdesk_double_hash_str \c_hash_str
     \exp_args:NnV \hyper@linkurl
-      { \IfNoValueTF {#1} { \__texdesk_stem:n {#2} } {#1} }
+      { \IfNoValueTF {#1} { \__texdesk_stem: } {#1} }
       \l__texdesk_target_str
   }
 \ExplSyntaxOff
@@ -267,9 +329,9 @@ export function rewriteLinks(text: string, m: MovedFileContext): { text: string;
 
 /** The target text for `ref` after a move: relative to `fromFile`, keeping `.tex` and `#anchor` if they were written. */
 function newTarget(ref: LinkRef, fromFile: string, target: string): string {
-  const anchor = /#.*$/.exec(ref.target)?.[0] ?? "";
+  const anchor = /\\?#.*$/.exec(ref.target)?.[0] ?? "";
   let rel = linkTargetFor(fromFile, target);
-  if (target.endsWith(".tex") && /\.tex(#|$)/.test(ref.target)) rel += ".tex";
+  if (target.endsWith(".tex") && /\.tex(\\?#|$)/.test(ref.target)) rel += ".tex";
   if (ref.command === "link") rel = rel.replace(/([%#])/g, "\\$1");
   return rel + anchor;
 }

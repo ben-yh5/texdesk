@@ -1364,7 +1364,7 @@ describe("links between files", () => {
   const note = `${WS}/Fa30/1-CS101/notes/lecture3.tex`;
   const files = {
     ...workspace,
-    [hw]: "\\documentclass{article}\n\\begin{document}\nUses \\link{lecture3} and \\href{https://example.com}{a site}.\n\\end{document}",
+    [hw]: "\\documentclass{article}\n\\begin{document}\nUses \\link{lecture3} and \\href{https://example.com}{a site}.\n\\section{Question 1}\n\\section{Question 2}\n\\end{document}",
     [note]: "\\documentclass{article}\n\\begin{document}\nLecture 3\n\\end{document}",
   };
 
@@ -1462,6 +1462,51 @@ describe("links between files", () => {
     expect(editor().state.doc.line(3).text).toBe("Lecture 3 \\link{hw2}");
     await pick(" [[math210|Math");
     expect(editor().state.doc.line(3).text).toBe("Lecture 3 \\link{hw2} \\link[Math]{2-MATH210}");
+  });
+
+  it("[[ closes itself, and finishing [[name]] yourself links to the name as typed", async () => {
+    const { editor } = await boot(files, note);
+    await waitFor(() => editor()?.state.doc.length);
+    editor().dispatch({ selection: { anchor: editor().state.doc.line(3).to } });
+    type(editor(), " [[");
+    expect(editor().state.doc.line(3).text).toBe("Lecture 3 [[]]");
+    type(editor(), "new idea]");
+    expect(editor().state.doc.line(3).text).toBe("Lecture 3 \\link{new idea}");
+    type(editor(), " [[hw2|Homework]");
+    expect(editor().state.doc.line(3).text).toBe("Lecture 3 \\link{new idea} \\link[Homework]{hw2}");
+  });
+
+  it("[[name# lists that file's headings, and becomes \\link{name\\#heading}", async () => {
+    const { editor, root } = await boot(files, note);
+    await waitFor(() => editor()?.state.doc.length);
+    editor().dispatch({ selection: { anchor: editor().state.doc.line(3).to } });
+    type(editor(), " [[101 hw2#q2");
+    const labels = await waitFor(() => currentCompletions(editor().state).length > 0 && currentCompletions(editor().state).map((c) => c.label));
+    expect(labels[0]).toBe("Question 2");
+    await waitFor(() => root.querySelector(".cm-tooltip-autocomplete"));
+    await settle(100);
+    editor().contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    expect(editor().state.doc.line(3).text).toBe("Lecture 3 \\link{hw2\\#Question 2}");
+  });
+
+  it("following a link to a heading opens the file at that heading", async () => {
+    const { editor, command } = await boot(files, note);
+    await waitFor(() => editor()?.state.doc.length);
+    const end = editor().state.doc.line(3).to;
+    editor().dispatch({ changes: { from: end, insert: " \\link{hw2\\#question 2}" }, selection: { anchor: end + 8 } });
+    await command("Follow link");
+    await waitFor(() => editor().state.doc.toString().includes("Uses"));
+    expect(editor().state.doc.lineAt(editor().state.selection.main.head).text).toBe("\\section{Question 2}");
+  });
+
+  it("following a \\link to a note that doesn't exist creates it next to the file", async () => {
+    const { editor, command, host } = await boot(files, note);
+    await waitFor(() => editor()?.state.doc.length);
+    const end = editor().state.doc.line(3).to;
+    editor().dispatch({ changes: { from: end, insert: " \\link{new idea}" }, selection: { anchor: end + 8 } });
+    await command("Follow link");
+    await waitFor(() => host.files.has(`${WS}/Fa30/1-CS101/notes/new idea.tex`));
+    await waitFor(() => editor().state.doc.length === 0);
   });
 
   it("[[ does nothing in math or after \\[", async () => {

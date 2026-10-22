@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MovedFileContext, findLinks, linkAt, linkTargetFor, outgoingLinks, resolveLink, rewriteLinks } from "../src/workspace/links";
+import { MovedFileContext, findHeadings, findLinks, headingLine, linkAnchor, linkAt, linkTargetFor, outgoingLinks, resolveLink, rewriteLinks } from "../src/workspace/links";
 
 const W = "/W";
 const files = new Set([
@@ -66,6 +66,37 @@ describe("resolving links", () => {
     expect(resolveLink({ command: "link", target: "hw2#question-3" }, hw1, ctx)).toEqual({ kind: "file", path: "/W/Fa30/1-CS101/hw/hw2.tex" });
     expect(resolveLink({ command: "link", target: "file:./hw2.tex" }, hw1, ctx)).toEqual({ kind: "file", path: "/W/Fa30/1-CS101/hw/hw2.tex" });
     expect(resolveLink({ command: "link", target: "nope" }, hw1, ctx)).toBeNull();
+  });
+
+  it("a heading after \\# (or #) is the anchor, not part of the file name", () => {
+    expect(resolveLink({ command: "link", target: "hw2\\#Question 3" }, hw1, ctx)).toEqual({ kind: "file", path: "/W/Fa30/1-CS101/hw/hw2.tex" });
+    expect(linkAnchor("hw2\\#Question 3")).toBe("Question 3");
+    expect(linkAnchor("hw2#50\\% off")).toBe("50% off");
+    expect(linkAnchor("\\#Local")).toBe("Local");
+    expect(linkAnchor("hw2")).toBeNull();
+  });
+});
+
+describe("headings", () => {
+  const text = [
+    "\\section{Intro}",
+    "% \\section{Commented}",
+    "\\subsection*[short]{Gradient \\emph{descent} for $f$}",
+    "text \\section{50\\% done} % trailing",
+    "\\begin{figure}",
+  ].join("\n");
+
+  it("lists headings as plain titles with lines", () => {
+    expect(findHeadings(text)).toEqual([
+      { title: "Intro", line: 1 },
+      { title: "Gradient descent for f", line: 3 },
+      { title: "50% done", line: 4 },
+    ]);
+  });
+
+  it("finds a heading by title, ignoring case and spacing", () => {
+    expect(headingLine(text, "gradient  descent for f")).toBe(3);
+    expect(headingLine(text, "Commented")).toBeNull();
   });
 });
 

@@ -13,7 +13,7 @@ import { brackets } from "./brackets";
 import { jumpOutMarker } from "./jumpout";
 import { sectionFolding } from "./sections";
 import { findReplace } from "./search";
-import { LinkCandidate, linkCandidates, linkCompletion } from "./linkcomplete";
+import { LinkCandidate, linkCandidates, linkCompletion, linkHeadings } from "./linkcomplete";
 import type { LinkCommand, LinkRef } from "../workspace/links";
 import { tags as t } from "@lezer/highlight";
 import { snippetExtension } from "../snippets/cm";
@@ -102,6 +102,8 @@ export interface EditorOptions {
   onEditDiagram?(pos: number): void;
   /** Files to suggest inside \\link{…}, \\input{…} etc. */
   linkCandidates?(command: LinkCommand): LinkCandidate[];
+  /** Heading titles of the file a \\link target points to (for `[[name#`). */
+  linkHeadings?(target: string): string[];
   settings?: EditorSettings;
 }
 
@@ -186,7 +188,7 @@ export function editorState(o: EditorOptions): EditorState {
     ext.push(
       latexLanguage, codeBlocks, lintGutter(),
       linter(null, { tooltipFilter: (ds) => ds.filter((d) => d.source !== "spelling") }),
-      linkCompletion, o.linkCandidates ? linkCandidates.of(o.linkCandidates) : [],
+      linkCompletion, o.linkCandidates ? linkCandidates.of(o.linkCandidates) : [], o.linkHeadings ? linkHeadings.of(o.linkHeadings) : [],
       snippetExtension(o.runtime),
       jumpOutMarker,
       numberedJumps,

@@ -42,7 +42,7 @@ import { Tour, tourSteps } from "./Tour";
 import { BuildController, BuildStatus, diagnosticsFor } from "../compile/controller";
 import { entryPath, exportTo, linkedPdfs, pdfName, readManifest, unlinkPdfs } from "../compile/export";
 import type { LinkCandidate } from "../editor/linkcomplete";
-import { Backlink, LinkCommand, LinkRef, ResolveContext, isUrl, linkTargetFor, normalize, outgoingLinks, resolveLink, rewriteLinks } from "../workspace/links";
+import { Backlink, LinkCommand, LinkRef, ResolveContext, findHeadings, headingLine, isUrl, linkAnchor, linkTargetFor, normalize, outgoingLinks, resolveLink, rewriteLinks } from "../workspace/links";
 import { followLinkAtCursor, linkAtPos } from "../editor/links";
 import { cycleBracketSize } from "../editor/brackets";
 import { jumpOut } from "../editor/jumpout";
@@ -363,9 +363,10 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         refreshMode(v);
       },
       onSave: () => void save(),
-      onOpenLink: (ref) => void followLink(ref, p),
+      onOpenLink: (ref) => void followLink(ref, p, { create: true }),
       onEditDiagram: (at) => void editDiagram({ at }),
       linkCandidates: (cmd) => linkCandidatesFor(cmd, p),
+      linkHeadings: (target) => headingsOf(target, p),
     });
   }
 
@@ -745,17 +746,32 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
 
   const backlinks = () => (path() ? linkIndex().get(path()!) ?? [] : []);
 
-  /** Opens what a link points to: a workspace file, a file next to `fromFile`, or a URL. */
-  async function followLink(ref: Pick<LinkRef, "command" | "target">, fromFile: string) {
+  /**
+   * Opens what a link points to: a workspace file (at the heading after `\#`, if any), a file
+   * next to `fromFile`, or a URL. With `create`, a \link to a note that doesn't exist yet
+   * creates it next to `fromFile`, as in Obsidian.
+   */
+  async function followLink(ref: Pick<LinkRef, "command" | "target">, fromFile: string, opts: { create?: boolean } = {}) {
     const ctx = linkContext();
     const figures = (await scopeAt(dirname(fromFile)))?.figuresDir;
     if (figures) ctx.searchDirs = [figures];
-    let hit = resolveLink(ref, fromFile, ctx);
-    if (!hit && !isUrl(ref.target) && !ref.target.startsWith("/")) {
+    const anchor = isUrl(ref.target) ? null : linkAnchor(ref.target);
+    const name = anchor === null ? ref.target : ref.target.replace(/\\?#.*$/, "").trim();
+    let hit = name || anchor === null ? resolveLink(ref, fromFile, ctx) : { kind: "file" as const, path: fromFile };
+    if (!hit && !isUrl(name) && !name.startsWith("/")) {
       // Outside a workspace (or not indexed yet): check next to the file directly.
       for (const ext of ["", ".tex"]) {
-        const p = normalize(join(dirname(fromFile), ref.target + ext));
+        const p = normalize(join(dirname(fromFile), name + ext));
         if (await host.exists(p) && !(await isDirectory(p))) { hit = { kind: "file", path: p }; break; }
+      }
+    }
+    if (!hit && opts.create && ref.command === "link" && root() && !isUrl(name) && !name.startsWith("/") && !name.startsWith("~")
+      && !/\.(?!tex$)[^/.]+$/.test(name) && !badName(name.replace(/^(\.\.\/)+/, ""))) {
+      const p = normalize(join(dirname(fromFile), name.endsWith(".tex") ? name : `${name}.tex`));
+      if (p.startsWith(root()! + "/") && await isDirectory(dirname(p))) {
+        await createTexFile(p, "");
+        if (path() === p) say(`Created ${relative(root()!, p)}`);
+        return;
       }
     }
     if (!hit) { say(`Nothing found for \\${ref.command}{${ref.target}}`, true); return; }
@@ -766,7 +782,20 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       try { await host.openExternal(hit.url); } catch (err) { fail(err); }
       return;
     }
-    await openPath(hit.path);
+    if (hit.path !== path()) await openPath(hit.path);
+    if (!anchor || !view || path() !== hit.path) return;
+    const line = headingLine(view.state.doc.toString(), anchor);
+    if (line === null) { say(`No heading “${anchor}” in ${basename(hit.path)}`, true); return; }
+    view.dispatch({ selection: EditorSelection.cursor(view.state.doc.line(line).from), scrollIntoView: true });
+    view.focus();
+  }
+
+  /** Heading titles in the file a \link{target} in `fromFile` points to. */
+  function headingsOf(target: string, fromFile: string): string[] {
+    const hit = resolveLink({ command: "link", target }, fromFile, linkContext());
+    if (hit?.kind !== "file") return [];
+    const text = hit.path === path() && view ? view.state.doc.toString() : texCache.get(hit.path);
+    return text ? findHeadings(text).map((h) => h.title) : [];
   }
 
   /** Workspace files that fit in `command`'s braces, as targets relative to `fromFile`. */
