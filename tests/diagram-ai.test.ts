@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { askClaude, extractPicture, preambleContext } from "../src/diagram/ai";
+import { askClaude, extractPicture, preambleContext, withoutPicture } from "../src/diagram/ai";
 import { memoryHost } from "./helpers";
 
 const PIC = "\\begin{tikzpicture}\n  \\node (a) at (0,0) {A};\n\\end{tikzpicture}";
@@ -13,7 +13,7 @@ const reply = (text: string, extra: object = {}) => ({
 describe("askClaude", () => {
   it("sends the picture, the preamble's TikZ setup and an image, and returns the picture that compiles", async () => {
     const host = memoryHost({});
-    host.ai.respond = () => reply(`Here it is:\n\`\`\`latex\n${NEW}\n\`\`\``);
+    host.ai.respond = () => reply(`Added B.\n\`\`\`latex\n${NEW}\n\`\`\``);
     const checked: string[] = [];
     const res = await askClaude(host, {
       settings, picture: PIC, request: "add B to the right of A", image: "PNGDATA",
@@ -21,7 +21,7 @@ describe("askClaude", () => {
       context: { before: "The graph\n", after: "\nhas two nodes." },
       check: async (p) => { checked.push(p); return []; },
     });
-    expect(res).toEqual({ picture: NEW, usage: { input: 1000, output: 200 } });
+    expect(res).toEqual({ picture: NEW, reply: "Added B.", usage: { input: 1000, output: 200 } });
     expect(checked).toEqual([NEW]);
     const body = host.ai.requests[0] as { model: string; system: string; output_config: unknown; messages: { content: { type: string; text?: string; source?: { data: string } }[] }[] };
     expect(body.model).toBe("claude-haiku-5-5");
@@ -34,6 +34,22 @@ describe("askClaude", () => {
     expect(content[3].text).toContain(PIC);
     expect(content[3].text).toContain("add B to the right of A");
     expect(body.system).toContain("\\sffamily");
+  });
+
+  it("answers questions without a picture, and sends the chat so far with the picture as it is now", async () => {
+    const host = memoryHost({});
+    host.ai.respond = () => reply("It has one node, A.");
+    const res = await askClaude(host, {
+      settings, picture: NEW, preamble: "", request: "how many nodes now?",
+      history: [{ role: "user", text: "add B" }, { role: "assistant", text: "Added B." }],
+      check: async () => { throw new Error("nothing to build"); },
+    });
+    expect(res).toEqual({ picture: null, reply: "It has one node, A.", usage: { input: 1000, output: 200 } });
+    const body = host.ai.requests[0] as { messages: { role: string; content: unknown }[] };
+    expect(body.messages.slice(0, 2)).toEqual([{ role: "user", content: "add B" }, { role: "assistant", content: "Added B." }]);
+    const last = body.messages[2].content as { text?: string }[];
+    expect(last[last.length - 1].text).toContain(NEW);
+    expect(last[last.length - 1].text).toContain("how many nodes now?");
   });
 
   it("sends compile errors back with Claude's whole reply, and stops after the last retry", async () => {
@@ -63,15 +79,16 @@ describe("askClaude", () => {
     expect(host.ai.requests).toHaveLength(2);
   });
 
-  it("reports refusals, cut-off answers, answers with no picture and API errors", async () => {
+  it("reports refusals, cut-off answers, fixes with no picture and API errors", async () => {
     const host = memoryHost({});
     const ask = () => askClaude(host, { settings, picture: PIC, preamble: "", request: "x", check: async () => [] });
     host.ai.respond = () => reply("", { stop_reason: "refusal" });
     expect((await ask()).error).toBe("Claude declined this request");
     host.ai.respond = () => reply("\\begin{tikzpicture}", { stop_reason: "max_tokens" });
     expect((await ask()).error).toMatch(/cut off/);
-    host.ai.respond = () => reply("I can't draw that.");
-    expect((await ask()).error).toBe("Claude didn't answer with a picture");
+    let n = 0;
+    host.ai.respond = () => reply(n++ ? "Sorry, I can't fix it." : NEW);
+    expect((await askClaude(host, { settings, picture: PIC, preamble: "", request: "x", check: async () => [{ line: null, message: "bad" }] })).error).toBe("Claude didn't answer with a picture");
     host.ai.respond = () => { throw new Error("No API key yet: add yours in Settings → AI"); };
     expect(await ask()).toEqual({ picture: null, usage: { input: 0, output: 0 }, error: "No API key yet: add yours in Settings → AI" });
   });
@@ -81,6 +98,12 @@ describe("helpers", () => {
   it("takes the last picture out of a reply", () => {
     expect(extractPicture(`first ${PIC} then\n\`\`\`latex\n${NEW}\n\`\`\``)).toBe(NEW);
     expect(extractPicture("no picture")).toBeNull();
+  });
+
+  it("takes the pictures out of a reply for the chat", () => {
+    expect(withoutPicture(`Moved A.\n\n\`\`\`latex\n${NEW}\n\`\`\`\nAnything else?`)).toBe("Moved A.\n\n\nAnything else?");
+    expect(withoutPicture(`Here: ${PIC}`)).toBe("Here:");
+    expect(withoutPicture("Use `\\draw`.")).toBe("Use `\\draw`.");
   });
 
   it("keeps the preamble lines that matter for pictures, whole", () => {

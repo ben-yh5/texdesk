@@ -1189,7 +1189,41 @@ describe("Phase 6: settings", () => {
     const texts = req.messages[0].content.map((c) => c.text ?? "");
     expect(texts.find((t) => t.startsWith("The text around"))).toContain("near\n[the picture]\nbelow\n```");
     expect(texts.join("\n")).not.toContain("far");
-    expect(texts.join("\n")).toContain("Change it like this: make Q bigger");
+    expect(texts.join("\n")).toContain("\n\nmake Q bigger");
+  });
+
+  it("the diagram editor's chat answers questions, changes the picture, and keeps the conversation", async () => {
+    const doc = "\\documentclass{article}\n\\begin{document}\n\\begin{tikzpicture}\n\\node at (0,0) {A};\n\\end{tikzpicture}\n\\end{document}";
+    const b = await boot({ ...workspace, [hw]: doc }, hw);
+    await waitFor(() => b.editor()?.state.doc.length);
+    const answers = ["It has one node, A.", "Added B.\n```latex\n\\begin{tikzpicture}\n\\node at (0,0) {A};\n\\node at (2,0) {B};\n\\end{tikzpicture}\n```"];
+    Object.assign(b.host.ai, { key: "sk-ant-x", respond: () => ({ content: [{ type: "text", text: answers.shift() }], stop_reason: "end_turn" }) });
+    // Every picture compiles (with nothing to draw).
+    b.host.compile = async () => ({ ok: true, cancelled: false, exitCode: 0, stdout: "", stderr: "", durationMs: 0, pdf: null, launchError: null });
+    b.editor()!.dispatch({ selection: { anchor: doc.indexOf("\\node") } });
+    await b.command("Edit diagram");
+    const dg = await waitFor(() => b.root.querySelector<HTMLElement>(".dg"));
+    // The chat shows first; the code is a tab away.
+    expect(dg.querySelector<HTMLElement>(".dg-code")!.hidden).toBe(true);
+    const ask = EditorView.findFromDOM(await waitFor(() => dg.querySelector<HTMLElement>(".dg-ask .cm-editor")))!;
+    const send = async (text: string) => { ask.dispatch({ changes: { from: 0, to: ask.state.doc.length, insert: text } }); press(ask, "Enter"); };
+    await send("how many nodes?");
+    await waitFor(() => dg.querySelector(".dg-msg.assistant:not(.pending)")?.textContent?.includes("It has one node, A."));
+    expect(dg.querySelector(".dg-msg.user")!.textContent).toBe("how many nodes?");
+    expect(dg.querySelector(".dg-msg-changed")).toBeNull();
+    await send("add B");
+    await waitFor(() => dg.querySelector(".dg-msg-changed"));
+    const code = EditorView.findFromDOM(dg.querySelector<HTMLElement>(".dg-code .cm-editor")!)!;
+    expect(code.state.doc.toString()).toContain("{B}");
+    // The reply shows without the picture's code, and the second request has the first exchange.
+    expect(dg.querySelectorAll(".dg-msg.assistant")[1].textContent).not.toContain("tikzpicture");
+    const req = b.host.ai.requests[1] as { messages: { role: string; content: unknown }[] };
+    expect(req.messages.slice(0, 2)).toEqual([{ role: "user", content: "how many nodes?" }, { role: "assistant", content: "It has one node, A." }]);
+    // The Code tab, and ⌘F from the chat goes to it.
+    [...dg.querySelectorAll<HTMLElement>(".dg-tab")].find((x) => x.textContent === "Chat")!.click();
+    b.key("f", { metaKey: true });
+    await waitFor(() => !dg.querySelector<HTMLElement>(".dg-code")!.hidden);
+    expect(dg.querySelector<HTMLElement>(".dg-chat")!.hidden).toBe(true);
   });
 
   it("⇧Enter in the diagram editor is Done, from the code or the Ask box", async () => {

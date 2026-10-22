@@ -1,7 +1,8 @@
 // The diagram editor: a window over the editor for one tikzpicture. The picture is built on
 // its own (see build.ts) and drawn with pdf.js; the boxes and handles on top come from where
 // TikZ reported each node and point, so dragging and adding things edits the code directly.
-// "Ask Claude" sends the picture and a request (see ai.ts). Done puts the code back in the file.
+// The side panel has the code and a chat with Claude, which can answer questions about the
+// picture or change it (see ai.ts). Done puts the code back in the file.
 
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import * as pdfjs from "pdfjs-dist";
@@ -9,6 +10,7 @@ import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { Compartment, EditorState, Transaction } from "@codemirror/state";
 import { EditorView, drawSelection, highlightActiveLine, keymap, lineNumbers, placeholder } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { searchPanelOpen } from "@codemirror/search";
 import { bracketMatching, syntaxHighlighting } from "@codemirror/language";
 import { latexLanguage } from "../editor/codeblocks";
 import { findReplace, openFind } from "../editor/search";
@@ -18,7 +20,7 @@ import type { SnippetRuntime } from "../snippets/runtime";
 import type { AiKeyStatus, Host } from "../host/types";
 import { AI_MODELS, AiSettings } from "../workspace/config";
 import { DiagramBuild, DiagramError, buildDiagram } from "./build";
-import { Usage, askClaude } from "./ai";
+import { Turn, Usage, askClaude } from "./ai";
 import { Item, Picture, Point, addItem, deleteItem, fmt, freshName, moveItem, movable, nameItem, parsePicture, setPoint, setText, surroundings, toUnits } from "./tikz";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -81,6 +83,18 @@ type Drag =
 
 const snap = (v: number, step: number) => Math.round(v / step) * step;
 
+/** A message in the chat; `changed`: Claude's reply changed the picture. */
+interface ChatMessage extends Turn {
+  changed?: boolean;
+  error?: boolean;
+  note?: string;
+}
+
+/** A reply's text, with its code blocks (other than the picture, which is taken out) set apart. */
+function ChatText(props: { text: string }) {
+  return <For each={props.text.split(/```[a-z]*\n?/)}>{(part, i) => (i() % 2 ? <pre class="dg-msg-code">{part.replace(/\n$/, "")}</pre> : <span>{part}</span>)}</For>;
+}
+
 export function DiagramEditor(props: DiagramEditorProps) {
   const [src, setSrc] = createSignal(props.picture);
   const undoStack: string[] = [];
@@ -95,6 +109,8 @@ export function DiagramEditor(props: DiagramEditorProps) {
   /** A node whose text is being typed (an existing one, or a new one at `at`, in picture units). */
   const [textEdit, setTextEdit] = createSignal<{ item?: Item; at?: Point; px: Point; value: string } | null>(null);
   const [request, setRequest] = createSignal("");
+  const [tab, setTab] = createSignal<"chat" | "code">("chat");
+  const [chat, setChat] = createSignal<ChatMessage[]>([]);
   const [aiStatus, setAiStatus] = createSignal<string | null>(null);
   const [aiBusy, setAiBusy] = createSignal(false);
   /** Null until checked; "denied": TeXdesk wasn't allowed to read the key, so Claude is off. */
@@ -428,6 +444,7 @@ export function DiagramEditor(props: DiagramEditorProps) {
             blur: () => { if (undoStack[undoStack.length - 1] === src()) undoStack.pop(); },
           }),
           EditorView.updateListener.of((u) => {
+            if (searchPanelOpen(u.state) && !searchPanelOpen(u.startState)) setTab("code");
             const text = u.state.doc.toString();
             if (u.docChanged && text !== src()) { redoStack.length = 0; setSrc(text); }
           }),
@@ -440,14 +457,16 @@ export function DiagramEditor(props: DiagramEditorProps) {
         view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: s }, annotations: Transaction.addToHistory.of(false) });
       }
     });
+    // Hidden while the chat shows, so it measures itself again when it comes back.
+    createEffect(() => { if (tab() === "code") view.requestMeasure(); });
     codeView = view;
     props.onCodeView?.(view);
     onCleanup(() => { props.onCodeView?.(null); codeView = undefined; view.destroy(); });
   });
 
   /**
-   * The Ask box: LaTeX like the main editor (highlighting and snippets). Enter asks, ⇧Enter is
-   * Done, Esc goes back to the tools' keys.
+   * The chat's message box: LaTeX like the main editor (highlighting and snippets). Enter sends,
+   * ⇧Enter is Done, Esc goes back to the tools' keys.
    */
   function mountAsk(parent: HTMLDivElement) {
     const editable = new Compartment();
@@ -459,7 +478,7 @@ export function DiagramEditor(props: DiagramEditorProps) {
           history(), drawSelection(), bracketMatching(), EditorView.lineWrapping, latexLanguage, syntaxHighlighting(highlight), theme,
           snippetExtension(props.runtime),
           editable.of(EditorView.editable.of(true)),
-          placeholder("Ask Claude to change the picture, e.g. “add a node C below B and connect it to A”"),
+          placeholder("Ask about the picture, or to change it, e.g. “add a node C below B and connect it to A”"),
           EditorView.theme({
             "&": { height: "auto" },
             ".cm-scroller": { fontFamily: "var(--td-ui)", fontSize: "12.5px", lineHeight: "1.45", maxHeight: "6em" },
@@ -504,11 +523,23 @@ export function DiagramEditor(props: DiagramEditorProps) {
     }
   }
 
+  let messages!: HTMLDivElement;
+  const scrollChat = () => queueMicrotask(() => messages && (messages.scrollTop = messages.scrollHeight));
+  const say = (m: ChatMessage) => { setChat((c) => [...c, m]); scrollChat(); };
+
   async function ask() {
     const text = request().trim();
     if (!text || aiBusy()) return;
+    // Earlier messages Claude answered (a failed one goes without its answer).
+    const history: Turn[] = [];
+    const c = chat();
+    for (let i = 0; i + 1 < c.length; i++) {
+      if (c[i].role === "user" && c[i + 1].role === "assistant" && !c[i + 1].error) history.push({ role: "user", text: c[i].text }, { role: "assistant", text: c[i + 1].text || "(Changed the picture.)" });
+    }
     setAiBusy(true);
     setSelected(null);
+    say({ role: "user", text });
+    askView?.dispatch({ changes: { from: 0, to: askView.state.doc.length } });
     try {
       const res = await askClaude(props.host, {
         settings: { ...props.ai, model: model() },
@@ -516,22 +547,24 @@ export function DiagramEditor(props: DiagramEditorProps) {
         preamble: props.preamble,
         context: surroundings(props.context, contextLines()),
         request: text,
+        history,
         image: errors().length ? null : await snapshot().catch(() => null),
         check: async (candidate) => { const b = await build(candidate); return b.cancelled ? [{ line: null, message: "the build was interrupted" }] : b.errors; },
         onStatus: setAiStatus,
       });
       setTotal((t) => ({ input: t.input + res.usage.input, output: t.output + res.usage.output }));
       const tokens = `${res.usage.input.toLocaleString()} tokens in, ${res.usage.output.toLocaleString()} out`;
-      if (res.picture) {
-        edit(res.picture);
-        askView?.dispatch({ changes: { from: 0, to: askView.state.doc.length } });
-        setAiStatus(`Done · ${tokens}`);
+      if (res.error) {
+        say({ role: "assistant", text: res.error, error: true, note: res.usage.input ? tokens : undefined });
+        if (/API key/i.test(res.error)) void checkKey();
       } else {
-        setAiStatus(`${res.error ?? "No answer"}${res.usage.input ? ` · ${tokens}` : ""}`);
-        if (res.error && /API key/i.test(res.error)) void checkKey();
+        if (res.picture) edit(res.picture);
+        say({ role: "assistant", text: res.reply ?? "", changed: !!res.picture, note: tokens });
       }
     } finally {
       setAiBusy(false);
+      setAiStatus(null);
+      scrollChat();
     }
   }
 
@@ -639,46 +672,67 @@ export function DiagramEditor(props: DiagramEditorProps) {
             </Show>
           </div>
           <div class="dg-side">
-            <div class="dg-code" ref={code} />
+            <div class="dg-tabs" role="tablist" aria-label="Side panel">
+              <button class={`dg-tab ${tab() === "chat" ? "active" : ""}`} role="tab" aria-selected={tab() === "chat"} onClick={() => { setTab("chat"); askView?.focus(); }}>Chat</button>
+              <button class={`dg-tab ${tab() === "code" ? "active" : ""}`} role="tab" aria-selected={tab() === "code"} onClick={() => { setTab("code"); codeView?.focus(); }}>Code</button>
+            </div>
+            <div class="dg-chat" hidden={tab() !== "chat"}>
+              <Show
+                when={keyStatus() !== "none" && keyStatus() !== "denied"}
+                fallback={
+                  <Show
+                    when={keyStatus() === "denied"}
+                    fallback={<div class="dg-ai-key">To ask Claude, add your Anthropic API key in Settings → AI. <button class="set-link" onClick={props.onOpenAiSettings}>Open Settings</button></div>}
+                  >
+                    <div class="dg-ai-key">Claude is off: TeXdesk wasn't allowed to read your API key from the Keychain. <button class="set-link" onClick={() => void checkKey(true)}>Allow Keychain access</button></div>
+                  </Show>
+                }
+              >
+                <div class="dg-messages" ref={messages}>
+                  <Show when={!chat().length && !aiBusy()}>
+                    <div class="dg-chat-empty">Ask Claude about the picture, or ask it to change something. Claude sees the code, how the picture looks and the text around it.</div>
+                  </Show>
+                  <For each={chat()}>
+                    {(m) => (
+                      <div class={`dg-msg ${m.role} ${m.error ? "error" : ""}`}>
+                        <Show when={m.text}><div class="dg-msg-text"><ChatText text={m.text} /></div></Show>
+                        <Show when={m.changed}><div class="dg-msg-changed">Changed the picture</div></Show>
+                        <Show when={m.note}><div class="dg-msg-note">{m.note}</div></Show>
+                      </div>
+                    )}
+                  </For>
+                  <Show when={aiBusy()}><div class="dg-msg assistant pending">{aiStatus() ?? "Asking Claude…"}</div></Show>
+                </div>
+                <div class="dg-ai">
+                  <div class={`dg-ask ${aiBusy() ? "busy" : ""}`} ref={mountAsk} />
+                  <div class="dg-ai-foot">
+                    <label class="dg-ai-opt" title="Lines of the document before and after the picture that Claude sees">
+                      Context
+                      <input
+                        class="dg-context" type="number" min="0" max="500" value={contextLines()}
+                        onInput={(e) => setContextLines(Math.max(0, Math.floor(Number(e.currentTarget.value)) || 0))}
+                      />
+                      lines
+                    </label>
+                    <select class="dg-model" aria-label="Model" onChange={(e) => setModel(e.currentTarget.value)}>
+                      <For each={models}>{(m) => <option value={m.value} selected={m.value === model()}>{m.label}</option>}</For>
+                    </select>
+                    <span class="ov-spacer" />
+                    <button class="dg-btn primary" disabled={aiBusy() || !request().trim()} onClick={() => void ask()}>{aiBusy() ? "Working…" : "Send"}</button>
+                  </div>
+                  <Show when={total().input}>
+                    <div class="dg-ai-total">This session: {total().input.toLocaleString()} in, {total().output.toLocaleString()} out</div>
+                  </Show>
+                </div>
+              </Show>
+            </div>
+            <div class="dg-code" ref={code} hidden={tab() !== "code"} />
             <Show when={errors().length}>
               <div class="dg-errors">
                 <For each={errors().slice(0, 4)}>{(e) => <div class="dg-error">{lineNote(e)}{e.message}</div>}</For>
               </div>
             </Show>
           </div>
-        </div>
-        <div class="dg-ai">
-          <Show
-            when={keyStatus() !== "none" && keyStatus() !== "denied"}
-            fallback={
-              <Show
-                when={keyStatus() === "denied"}
-                fallback={<div class="dg-ai-key">To ask Claude, add your Anthropic API key in Settings → AI. <button class="set-link" onClick={props.onOpenAiSettings}>Open Settings</button></div>}
-              >
-                <div class="dg-ai-key">Claude is off: TeXdesk wasn't allowed to read your API key from the Keychain. <button class="set-link" onClick={() => void checkKey(true)}>Allow Keychain access</button></div>
-              </Show>
-            }
-          >
-            <div class={`dg-ask ${aiBusy() ? "busy" : ""}`} ref={mountAsk} />
-            <div class="dg-ai-foot">
-              <span class="dg-ai-status">{aiStatus() ?? ""}</span>
-              <Show when={total().input}>
-                <span class="dg-ai-total">This session: {total().input.toLocaleString()} in, {total().output.toLocaleString()} out</span>
-              </Show>
-              <label class="dg-ai-opt" title="Lines of the document before and after the picture that Claude sees">
-                Context
-                <input
-                  class="dg-context" type="number" min="0" max="500" value={contextLines()}
-                  onInput={(e) => setContextLines(Math.max(0, Math.floor(Number(e.currentTarget.value)) || 0))}
-                />
-                lines
-              </label>
-              <select class="dg-model" aria-label="Model" onChange={(e) => setModel(e.currentTarget.value)}>
-                <For each={models}>{(m) => <option value={m.value} selected={m.value === model()}>{m.label}</option>}</For>
-              </select>
-              <button class="dg-btn primary" disabled={aiBusy() || !request().trim()} onClick={() => void ask()}>{aiBusy() ? "Working…" : "Ask Claude"}</button>
-            </div>
-          </Show>
         </div>
       </div>
     </div>
