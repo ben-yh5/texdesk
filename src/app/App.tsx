@@ -293,8 +293,24 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   async function save(buildDelay = config().build.debounceMs): Promise<boolean> {
     const p = path();
     if (!p || !view || !dirty()) return true;
+    if (askingReload) return false; // answer that first
     try {
       const text = view.state.doc.toString();
+      let disk: string | null = null;
+      try { disk = await host.readText(p); } catch { /* gone: write it back */ }
+      if (disk !== null && onDisk.has(p) && disk !== onDisk.get(p) && disk !== text) {
+        const choice = await palette.pick({
+          title: `${basename(p)} changed on disk since TeXdesk last read it`,
+          placeholder: "Choose…",
+          items: [
+            { label: "Save over it", detail: "replaces the file on disk with your version", value: "save" },
+            { label: "Reload from disk", detail: "drops your unsaved edits", value: "reload" },
+          ],
+        });
+        if (choice === "reload") { await reloadFromDisk(p, true); return true; }
+        if (choice !== "save" || path() !== p || !view) return false;
+      }
+      onDisk.set(p, text); // before writing, so the watcher sees our own save as ours
       await host.writeText(p, text);
       setDirty(false);
       if (extname(p) === "tex" && root() && p.startsWith(root()! + "/")) { texCache.set(p, text); reindexLinks(); }
@@ -325,6 +341,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   const viewDoc = new Map<string, string | null>();
   /** States of open text files that aren't on screen. */
   const docs = new Map<string, EditorState>();
+  /** Each open file's text as TeXdesk last read or wrote it, to tell changes made elsewhere from its own. */
+  const onDisk = new Map<string, string>();
   const pdfAnchors = new Map<string, Anchor>();
   let outputApi: PdfPaneApi | null = null;
 
@@ -345,6 +363,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       fail(`Could not open ${basename(p)}: ${String(err)}`);
       return null;
     }
+    onDisk.set(p, text);
     const tex = TEX_EXT.has(extname(p));
     return editorState({
       doc: text,
@@ -676,24 +695,32 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   let treeTimer: ReturnType<typeof setTimeout> | undefined;
   /** Set while the open file is replaced with its new contents from disk (not an edit). */
   let reloading = false;
+  /** Set while asking whether to reload the current file over your unsaved edits. */
+  let askingReload = false;
 
   /** Files changed on disk (by TeXdesk or anything else): refresh the tree, backlinks and the open file. */
   function onDiskChange(r: string, paths: string[]) {
     if (root() !== r) return;
     for (const p of paths) texCache.delete(p);
-    const cur = path();
-    if (cur && paths.includes(cur)) void reloadFromDisk(cur);
+    for (const p of paths) if (shownIn(p)) void reloadFromDisk(p);
     clearTimeout(treeTimer);
     treeTimer = setTimeout(() => void refreshFiles(), 150);
   }
   onCleanup(() => clearTimeout(treeTimer));
 
-  /** The open file changed on disk: show the new contents, unless you have unsaved edits. */
-  async function reloadFromDisk(p: string) {
+  /** A file on screen changed on disk: show the new contents; with unsaved edits, ask first (`force` doesn't). */
+  async function reloadFromDisk(p: string, force = false) {
     let text: string;
     try { text = await host.readText(p); } catch { return; } // deleted or moved: the tree refresh handles it
-    if (!view || path() !== p || dirty()) return;
-    const old = view.state.doc.toString();
+    const g = shownIn(p);
+    const v = g && views.get(g);
+    if (!v) return;
+    if (!force && path() === p && dirty()) { // only the current file can have unsaved edits
+      if (text !== onDisk.get(p)) void askReload(p);
+      return;
+    }
+    onDisk.set(p, text);
+    const old = v.state.doc.toString();
     if (text === old) return; // our own save
     let a = 0;
     while (a < old.length && old[a] === text[a]) a++;
@@ -701,11 +728,29 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     while (b < Math.min(old.length, text.length) - a && old[old.length - 1 - b] === text[text.length - 1 - b]) b++;
     reloading = true;
     try {
-      view.dispatch({ changes: { from: a, to: old.length - b, insert: text.slice(a, text.length - b) }, annotations: Transaction.remote.of(true) });
+      v.dispatch({ changes: { from: a, to: old.length - b, insert: text.slice(a, text.length - b) }, annotations: Transaction.remote.of(true) });
     } finally { reloading = false; }
-    setDirty(false);
-    updateTitle();
+    if (path() === p) { setDirty(false); updateTitle(); }
     say(`${basename(p)} changed on disk — reloaded`);
+  }
+
+  /** The current file changed on disk while you have unsaved edits: reload it, or keep yours (saving then replaces it). */
+  async function askReload(p: string) {
+    if (askingReload) return;
+    askingReload = true;
+    let choice: string | null;
+    try {
+      choice = await palette.pick({
+        title: `${basename(p)} changed on disk, and you have unsaved edits`,
+        placeholder: "Choose…",
+        items: [
+          { label: "Reload from disk", detail: "drops your unsaved edits", value: "reload" },
+          { label: "Keep my edits", detail: "saving replaces the file on disk", value: "keep" },
+        ],
+      });
+    } finally { askingReload = false; }
+    if (choice === "reload") await reloadFromDisk(p, true);
+    else if (choice === "keep") { try { onDisk.set(p, await host.readText(p)); } catch { /* gone: saving writes it back */ } }
   }
 
   // ---- links between files ----------------------------------------------------------

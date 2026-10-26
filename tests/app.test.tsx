@@ -1871,7 +1871,9 @@ describe("keeping up with the disk", () => {
     await waitFor(() => !names(b.root).includes("handout.pdf"));
   });
 
-  it("the open file reloads when it changes on disk, unless you have unsaved edits", async () => {
+  const palTitle = (root: HTMLElement) => root.querySelector(".pal-title")?.textContent ?? "";
+
+  it("the open file reloads when it changes on disk; with unsaved edits it asks first", async () => {
     const b = await boot(workspace, hw1);
     await waitFor(() => b.editor()?.state.doc.length);
     b.host.touch(hw1, "\\documentclass{article}\nChanged elsewhere");
@@ -1879,8 +1881,54 @@ describe("keeping up with the disk", () => {
     expect(b.status()).not.toContain("●");
     type(b.editor(), "mine ");
     b.host.touch(hw1, "\\documentclass{article}\nAgain");
-    await settle(100);
+    await waitFor(() => palTitle(b.root).includes("hw1.tex changed on disk"));
     expect(b.editor().state.doc.toString()).toContain("mine");
+    await b.palette("Reload from disk");
+    await waitFor(() => b.editor().state.doc.toString() === "\\documentclass{article}\nAgain");
+    expect(b.status()).not.toContain("●");
+  });
+
+  it("keeping your edits over a change on disk saves them without asking again", async () => {
+    const b = await boot(workspace, hw1);
+    await waitFor(() => b.editor()?.state.doc.length);
+    type(b.editor(), "mine ");
+    b.host.touch(hw1, "\\documentclass{article}\nElsewhere");
+    await waitFor(() => palTitle(b.root).includes("changed on disk"));
+    await b.palette("Keep my edits");
+    expect(b.editor().state.doc.toString()).toContain("mine");
+    await b.command("Save");
+    await waitFor(() => b.host.files.get(hw1)!.includes("mine"));
+    expect(b.root.querySelector(".pal-input")).toBeNull();
+  });
+
+  it("saving over a change on disk TeXdesk didn't see asks first", async () => {
+    const b = await boot(workspace, hw1);
+    await waitFor(() => b.editor()?.state.doc.length);
+    type(b.editor(), "mine ");
+    b.host.files.set(hw1, "Elsewhere"); // changed without a watcher event
+    await b.command("Save");
+    await waitFor(() => palTitle(b.root).includes("changed on disk"));
+    b.root.querySelector(".pal-input")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await settle(30);
+    expect(b.host.files.get(hw1)).toBe("Elsewhere"); // cancelled: nothing written
+    await b.command("Save");
+    await b.palette("Save over it");
+    await waitFor(() => b.host.files.get(hw1)!.includes("mine"));
+  });
+
+  it("a file showing in the other split pane reloads too", async () => {
+    const hw2 = `${WS}/Fa30/1-CS101/hw/hw2.tex`;
+    const b = await boot({ ...workspace, [hw2]: "\\documentclass{article}\nTwo" }, hw1);
+    await waitFor(() => b.editor()?.state.doc.length);
+    await b.command("Toggle PDF"); // just the text group
+    (await waitFor(() => [...b.root.querySelectorAll<HTMLElement>(".tree-row")].find((r) => r.querySelector(".tree-name")?.textContent === "hw2.tex"))).click();
+    await waitFor(() => b.editor().state.doc.toString().includes("Two"));
+    await b.command("Split editor right");
+    const editors = () => [...b.root.querySelectorAll<HTMLElement>(".cm-editor")].map((e) => EditorView.findFromDOM(e)!);
+    await waitFor(() => editors().length === 2 && editors().every((v) => v.state.doc.length));
+    const other = editors().find((v) => !v.state.doc.toString().includes("Two"))!; // hw1, left behind in the first pane
+    b.host.touch(hw1, "\\documentclass{article}\nChanged elsewhere");
+    await waitFor(() => other.state.doc.toString().includes("Changed elsewhere"));
   });
 
   it("the tab bar's Save PDF button saves a linked copy and shows it under the .tex", async () => {
