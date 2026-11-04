@@ -205,6 +205,13 @@ export function placeName(names: string[], name: string, before: string | null):
   return out;
 }
 
+/** A folder's names in order (`full`) with the ones a view showed rearranged as `shown`; the rest keep their places. */
+export function mergeOrder(full: string[], shown: string[]): string[] {
+  const moved = new Set(shown);
+  let i = 0;
+  return full.map((n) => (moved.has(n) ? shown[i++] : n));
+}
+
 // ---- layout blocks ------------------------------------------------------------------------
 
 /** A glob on file names: `*` any run, `?` one character, case-insensitive. */
@@ -213,7 +220,7 @@ export function globMatch(glob: string, name: string): boolean {
   return new RegExp(`^${re}$`, "i").test(name);
 }
 
-const findGroup = (g: GroupItem, path: string): GroupItem | null => {
+export const findGroup = (g: GroupItem, path: string): GroupItem | null => {
   if (g.path === path) return g;
   for (const it of g.items) if (it.type === "group") { const hit = findGroup(it, path); if (hit) return hit; }
   return null;

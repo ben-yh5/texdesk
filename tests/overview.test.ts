@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_META, GroupItem, Item, buildOverview, docTitle, filesView, filterOverview, folderMetas, globMatch, moveName, orderNames, placeName, subfolderRows,
+  DEFAULT_META, GroupItem, Item, buildOverview, docTitle, filesView, filterOverview, folderMetas, globMatch, mergeOrder, moveName, orderNames, placeName, subfolderRows,
 } from "../src/workspace/overview";
 import { emptyWorkspace } from "../src/workspace/model";
 
@@ -34,6 +34,8 @@ describe("ordering", () => {
     expect(placeName(["a", "b", "c"], "a", "c")).toEqual(["b", "a", "c"]);
     expect(placeName(["a", "b", "c"], "a", null)).toEqual(["b", "c", "a"]);
     expect(placeName(["a", "b", "c"], "a", "a")).toEqual(["a", "b", "c"]);
+    // A view that showed only b and d: the others keep their places.
+    expect(mergeOrder(["a", "b", "c", "d"], ["d", "b"])).toEqual(["a", "d", "c", "b"]);
   });
 });
 

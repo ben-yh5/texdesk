@@ -2110,6 +2110,19 @@ describe("folder overview", () => {
     await waitFor(() => heads(b.root).join() === "figures,notes,hw");
   });
 
+  it("reordering in a Files block that hides some files keeps the hidden ones' places", async () => {
+    const ws = JSON.parse((files as Record<string, string>)[WSJ]);
+    ws.overviews.class = { blocks: [{ type: "header" }, { type: "files", subfolder: "hw", pdfs: false, other: false }] };
+    const b = await open(undefined, { [WSJ]: JSON.stringify(ws) });
+    await waitFor(() => rows(b.root).join() === "hw1.tex,hw2.tex");
+    const row = (title: string) => [...b.root.querySelectorAll<HTMLElement>(".overview-pane .ov-row")].find((r) => r.querySelector(".ov-title")!.textContent === title)!;
+    row("hw2.tex").dispatchEvent(new Event("dragstart", { bubbles: true }));
+    row("hw1.tex").dispatchEvent(new MouseEvent("dragover", { bubbles: true, cancelable: true, clientY: 0 }));
+    row("hw1.tex").dispatchEvent(new Event("drop", { bubbles: true, cancelable: true }));
+    await waitFor(() => JSON.stringify(JSON.parse(b.host.files.get(WSJ)!).folders["Fa30/1-CS101/hw"]?.order) === '["data.zip","hw1.pdf","hw2.tex","hw1.tex"]');
+    await waitFor(() => rows(b.root).join() === "hw2.tex,hw1.tex");
+  });
+
   it("renaming a file in TeXdesk keeps its place", async () => {
     const ws = JSON.parse((files as Record<string, string>)[WSJ]);
     ws.folders["Fa30/1-CS101/notes"] = { order: ["flows.tex", "intro.tex"] };
