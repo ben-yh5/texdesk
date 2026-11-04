@@ -33,6 +33,7 @@ describe("ordering", () => {
     expect(moveName(["a", "b", "c"], "a", -1)).toEqual(["a", "b", "c"]);
     expect(placeName(["a", "b", "c"], "a", "c")).toEqual(["b", "a", "c"]);
     expect(placeName(["a", "b", "c"], "a", null)).toEqual(["b", "c", "a"]);
+    expect(placeName(["a", "b", "c"], "a", "a")).toEqual(["a", "b", "c"]);
   });
 });
 

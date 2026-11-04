@@ -2058,6 +2058,58 @@ describe("folder overview", () => {
     await waitFor(() => heads(b.root).join() === "notes,figures,hw");
   });
 
+  it("dragging: a row's bottom half drops after it, past the last row drops at the end, a gap keeps the spot", async () => {
+    const b = await open();
+    const row = (title: string) => [...b.root.querySelectorAll<HTMLElement>(".overview-pane .ov-row")].find((r) => r.querySelector(".ov-title")!.textContent === title)!;
+    const order = () => JSON.stringify(JSON.parse(b.host.files.get(WSJ)!).folders["Fa30/1-CS101/hw"]?.order);
+    const box = (el: HTMLElement) => { el.getBoundingClientRect = () => ({ top: 0, height: 20, bottom: 20, left: 0, right: 100, width: 100, x: 0, y: 0, toJSON() {} }); };
+    const over = (el: HTMLElement, y: number) => el.dispatchEvent(new MouseEvent("dragover", { bubbles: true, cancelable: true, clientY: y }));
+    expect(rows(b.root).slice(2)).toEqual(["data.zip", "hw1.pdf", "hw1.tex", "hw2.tex"]);
+    // Down: data.zip onto hw1.pdf's bottom half lands after it.
+    row("data.zip").dispatchEvent(new Event("dragstart", { bubbles: true }));
+    box(row("hw1.pdf"));
+    over(row("hw1.pdf"), 15);
+    expect(row("hw1.tex").classList.contains("ov-insert")).toBe(true);
+    row("hw1.pdf").dispatchEvent(new Event("drop", { bubbles: true, cancelable: true }));
+    await waitFor(() => order() === '["hw1.pdf","data.zip","hw1.tex","hw2.tex"]');
+    await waitFor(() => rows(b.root).slice(2).join() === "hw1.pdf,data.zip,hw1.tex,hw2.tex");
+    // Next to itself: no line, and dropping changes nothing.
+    row("hw1.tex").dispatchEvent(new Event("dragstart", { bubbles: true }));
+    over(row("hw1.tex"), 0);
+    expect(b.root.querySelector(".overview-pane .ov-insert, .overview-pane .ov-insert-after")).toBeNull();
+    row("hw1.tex").dispatchEvent(new Event("drop", { bubbles: true, cancelable: true }));
+    await settle(30);
+    expect(order()).toBe('["hw1.pdf","data.zip","hw1.tex","hw2.tex"]');
+    row("hw1.tex").dispatchEvent(new Event("dragstart", { bubbles: true }));
+    // To the end: the last row's bottom half, then released over the gap below the rows.
+    box(row("hw2.tex"));
+    over(row("hw2.tex"), 15);
+    expect(row("hw2.tex").classList.contains("ov-insert-after")).toBe(true);
+    const gap = row("hw2.tex").parentElement!;
+    const overGap = new MouseEvent("dragover", { bubbles: true, cancelable: true });
+    gap.dispatchEvent(overGap);
+    expect(overGap.defaultPrevented).toBe(true);
+    expect(row("hw2.tex").classList.contains("ov-insert-after")).toBe(true);
+    gap.dispatchEvent(new Event("drop", { bubbles: true, cancelable: true }));
+    await waitFor(() => order() === '["hw1.pdf","data.zip","hw2.tex","hw1.tex"]');
+    await waitFor(() => rows(b.root).slice(2).join() === "hw1.pdf,data.zip,hw2.tex,hw1.tex");
+  });
+
+  it("dragging a folder: anywhere over another folder's section (its rows too) places it there", async () => {
+    const b = await open(undefined, {}, { [`${C}/notes/intro.tex`]: 1, [`${C}/notes/flows.tex`]: 2 });
+    const head = (name: string) => [...b.root.querySelectorAll<HTMLElement>(".overview-pane .ov-group-head")].find((h) => h.querySelector(".ov-group-name")!.textContent === name)!;
+    const intro = [...b.root.querySelectorAll<HTMLElement>(".overview-pane .ov-row")].find((r) => r.querySelector(".ov-title")!.textContent === "Introduction")!;
+    expect(heads(b.root)).toEqual(["notes", "hw", "figures"]);
+    head("figures").dispatchEvent(new Event("dragstart", { bubbles: true }));
+    const over = new MouseEvent("dragover", { bubbles: true, cancelable: true, clientY: 0 });
+    intro.dispatchEvent(over); // a row inside notes: before notes
+    expect(over.defaultPrevented).toBe(true);
+    expect(head("notes").parentElement!.classList.contains("ov-insert")).toBe(true);
+    intro.dispatchEvent(new Event("drop", { bubbles: true, cancelable: true }));
+    await waitFor(() => JSON.stringify(JSON.parse(b.host.files.get(WSJ)!).folders["Fa30/1-CS101"].order) === '["figures","notes","hw"]');
+    await waitFor(() => heads(b.root).join() === "figures,notes,hw");
+  });
+
   it("renaming a file in TeXdesk keeps its place", async () => {
     const ws = JSON.parse((files as Record<string, string>)[WSJ]);
     ws.folders["Fa30/1-CS101/notes"] = { order: ["flows.tex", "intro.tex"] };

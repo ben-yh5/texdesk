@@ -198,6 +198,7 @@ export function moveName(names: string[], name: string, delta: number): string[]
 
 /** `names` with `name` placed just before `before` (or at the end if null). */
 export function placeName(names: string[], name: string, before: string | null): string[] {
+  if (before === name) return names;
   const out = names.filter((n) => n !== name);
   const at = before === null ? out.length : out.indexOf(before);
   out.splice(at < 0 ? out.length : at, 0, name);
