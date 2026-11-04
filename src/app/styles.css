@@ -546,6 +546,8 @@ body.resizing .pdf-pane, body.resizing .editor { pointer-events: none; }
 .ov-pdf { font: inherit; font-size: 10px; padding: 0 5px; border-radius: 4px; border: 1px solid var(--td-border); background: none; color: var(--td-muted); cursor: pointer; }
 .ov-pdf:hover { color: var(--td-accent); border-color: var(--td-accent); }
 .ov-insert { box-shadow: inset 0 2px 0 var(--td-accent); }
+.ov-insert-after { box-shadow: inset 0 -2px 0 var(--td-accent); }
+.ov-dragging { opacity: 0.4; }
 .ov-empty { color: var(--td-muted); padding: 4px 6px; font-style: italic; }
 .ov-hint { color: var(--td-muted); font-size: 11px; margin-top: 18px; }
 .status-crumb { background: none; border: none; padding: 0; font: inherit; color: inherit; cursor: pointer; }

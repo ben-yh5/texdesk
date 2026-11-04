@@ -34,7 +34,7 @@ import { SearchFile, SearchHit, searchFile, searchFiles } from "../workspace/sea
 import { applyGlobalMigration, applyMigration, describePlan, hasLegacySetup, mergeSettings, planGlobalMigration, planMigration } from "../workspace/migrate";
 import { PaletteView, PickItem, createPalette } from "./Palette";
 import { ALL_KINDS, HeaderLink, Kinds, NewAction, Overview, ResolvedBlock } from "./Overview";
-import { OverviewInput, filesView, folderMetas as metasOf, siblingDocs, subfolderRows } from "../workspace/overview";
+import { OverviewInput, buildOverview, filesView, findGroup, folderMetas as metasOf, mergeOrder, siblingDocs, subfolderRows } from "../workspace/overview";
 import { DebugPanel } from "./DebugPanel";
 import { SettingsScope, SettingsView } from "./Settings";
 import { Plugin, createPlugin, ensurePluginsFolder, listPlugins, pluginIdFor, snippetFolders as pluginSnippetFolders, NEW_PLUGIN_FILE } from "../plugins/plugins";
@@ -2855,8 +2855,11 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   }
 
   /** Saves a folder's order (names, in order) in workspace.json. */
+  /** Saves a folder's order from a view that showed `names` (a Files block may hide some files; they keep their places). */
   async function saveOrder(folderRel: string, names: string[]) {
-    await updateWorkspace((w) => ({ ...w, folders: { ...w.folders, [folderRel]: { ...w.folders[folderRel], order: names } } }));
+    const full = findGroup(buildOverview(overviewInput()), folderRel)?.items.map((i) => i.name) ?? names;
+    const order = mergeOrder(full, names);
+    await updateWorkspace((w) => ({ ...w, folders: { ...w.folders, [folderRel]: { ...w.folders[folderRel], order } } }));
   }
 
   /** "New …" buttons for a folder of `type` (absolute `dir` from relative `rel`): its templates, then folder types made inside it. */

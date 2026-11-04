@@ -198,10 +198,18 @@ export function moveName(names: string[], name: string, delta: number): string[]
 
 /** `names` with `name` placed just before `before` (or at the end if null). */
 export function placeName(names: string[], name: string, before: string | null): string[] {
+  if (before === name) return names;
   const out = names.filter((n) => n !== name);
   const at = before === null ? out.length : out.indexOf(before);
   out.splice(at < 0 ? out.length : at, 0, name);
   return out;
+}
+
+/** A folder's names in order (`full`) with the ones a view showed rearranged as `shown`; the rest keep their places. */
+export function mergeOrder(full: string[], shown: string[]): string[] {
+  const moved = new Set(shown);
+  let i = 0;
+  return full.map((n) => (moved.has(n) ? shown[i++] : n));
 }
 
 // ---- layout blocks ------------------------------------------------------------------------
@@ -212,7 +220,7 @@ export function globMatch(glob: string, name: string): boolean {
   return new RegExp(`^${re}$`, "i").test(name);
 }
 
-const findGroup = (g: GroupItem, path: string): GroupItem | null => {
+export const findGroup = (g: GroupItem, path: string): GroupItem | null => {
   if (g.path === path) return g;
   for (const it of g.items) if (it.type === "group") { const hit = findGroup(it, path); if (hit) return hit; }
   return null;

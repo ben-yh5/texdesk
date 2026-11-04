@@ -111,6 +111,8 @@ export function Overview(props: OverviewProps) {
   const [selected, setSelected] = createSignal<number | null>(null);
   const [drag, setDrag] = createSignal<{ group: string; name: string } | null>(null);
   const [dropBefore, setDropBefore] = createSignal<{ group: string; name: string | null } | null>(null);
+  /** The dragged row is dimmed once the browser has taken its picture for the drag. */
+  const [lifted, setLifted] = createSignal(false);
   const kinds = () => props.kinds?.() ?? ALL_KINDS;
   const allKinds = () => kinds().docs && kinds().pdfs && kinds().other;
   const filtering = () => !!query().trim() || !allKinds();
@@ -150,7 +152,8 @@ export function Overview(props: OverviewProps) {
       }
     }
 
-    // Drag to reorder, within one folder.
+    // Drag to reorder, within one folder. A row's top half drops before it, its bottom half after;
+    // a subfolder counts as its whole section (head and contents); gaps keep the last spot shown.
     const dragProps = (group: string, item: Item) => ({
       draggable: reorder(),
       onDragStart: (e: DragEvent) => {
@@ -158,35 +161,57 @@ export function Overview(props: OverviewProps) {
         e.dataTransfer?.setData("text/plain", item.name);
         if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
         setDrag({ group, name: item.name });
+        setTimeout(() => setLifted(!!drag()));
       },
+      onDragEnd: () => { setDrag(null); setDropBefore(null); setLifted(false); },
+    });
+    const dropProps = (group: string, item: Item) => ({
       onDragOver: (e: DragEvent) => {
         const d = drag();
         if (!d || d.group !== group) return;
         e.preventDefault();
         e.stopPropagation();
-        const el = e.currentTarget as HTMLElement;
-        const r = el.getBoundingClientRect();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
         const after = r.height > 0 && e.clientY > r.top + r.height / 2;
         const names = namesIn(p.block.model, group);
-        setDropBefore({ group, name: after ? names[names.indexOf(item.name) + 1] ?? null : item.name });
+        const before = after ? names[names.indexOf(item.name) + 1] ?? null : item.name;
+        // Dropping right next to itself changes nothing: show no line there.
+        const moves = placeName(names, d.name, before).join("/") !== names.join("/");
+        setDropBefore(moves ? { group, name: before } : null);
       },
-      onDrop: (e: DragEvent) => {
-        const d = drag();
-        const at = dropBefore();
-        if (!d || !at || d.group !== group) return;
+      onDrop: (e: DragEvent) => drop(e, group),
+    });
+    /** For the gaps between rows of `group`'s folder: keeps the spot shown, and drops there. */
+    const gapProps = (group: string) => ({
+      onDragOver: (e: DragEvent) => {
+        if (drag()?.group !== group) return;
         e.preventDefault();
         e.stopPropagation();
-        const names = namesIn(p.block.model, group);
-        const next = placeName(names, d.name, at.name);
-        if (next.join("/") !== names.join("/")) props.onReorder(group, next);
-        setDrag(null);
-        setDropBefore(null);
       },
-      onDragEnd: () => { setDrag(null); setDropBefore(null); },
+      onDrop: (e: DragEvent) => drop(e, group),
     });
-    const insertClass = (group: string, name: string) => {
+    function drop(e: DragEvent, group: string) {
+      const d = drag();
       const at = dropBefore();
-      return at && at.group === group && at.name === name && drag()?.name !== name ? "ov-insert" : "";
+      if (!d || d.group !== group) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setDrag(null);
+      setDropBefore(null);
+      setLifted(false);
+      if (!at || at.group !== group) return;
+      const names = namesIn(p.block.model, group);
+      const next = placeName(names, d.name, at.name);
+      if (next.join("/") !== names.join("/")) props.onReorder(group, next);
+    }
+    const insertClass = (group: string, name: string) => {
+      const d = drag();
+      const at = dropBefore();
+      const mine = lifted() && d && d.group === group && d.name === name ? "ov-dragging" : "";
+      if (!at || at.group !== group) return mine;
+      if (at.name === name) return `${mine} ov-insert`;
+      return at.name === null && namesIn(p.block.model, group).at(-1) === name ? `${mine} ov-insert-after` : mine;
     };
 
     const DocRow = (r: { item: DocItem; group: string }) => {
@@ -196,7 +221,7 @@ export function Overview(props: OverviewProps) {
         <div
           class={`ov-row ov-${r.item.type} ${insertClass(r.group, r.item.name)}`} tabindex={0} role="button"
           onClick={() => props.onOpen(r.item.path)} onKeyDown={(e) => onKey(e, r.group, r.item)}
-          title={r.item.path} {...dragProps(r.group, r.item)}
+          title={r.item.path} {...dragProps(r.group, r.item)} {...dropProps(r.group, r.item)}
         >
           <span class="ov-title">{(show().title && r.item.title) || r.item.name}</span>
           <Show when={show().title && r.item.title}><span class="ov-file">{r.item.name}</span></Show>
@@ -215,9 +240,9 @@ export function Overview(props: OverviewProps) {
     const GroupView = (g: { group: GroupItem; parent: string; depth: number }) => {
       const link = () => !!g.group.kind;
       return (
-        <section class={`ov-group depth-${Math.min(g.depth, 3)} ${link() ? "ov-group-link" : ""}`}>
+        <section class={`ov-group depth-${Math.min(g.depth, 3)} ${link() ? "ov-group-link" : ""} ${insertClass(g.parent, g.group.name)}`} {...dropProps(g.parent, g.group)}>
           <div
-            class={`ov-group-head ${insertClass(g.parent, g.group.name)}`} tabindex={0}
+            class="ov-group-head" tabindex={0}
             title={link() ? `Open the ${props.typeLabel(g.group.kind!)} overview` : undefined}
             onClick={(e) => { if (link()) props.onOverview(g.group.path, mod(e)); }}
             onKeyDown={(e) => {
@@ -238,7 +263,7 @@ export function Overview(props: OverviewProps) {
     };
 
     const Items = (g: { group: GroupItem; depth: number }) => (
-      <div class="ov-items">
+      <div class="ov-items" {...gapProps(g.group.path)}>
         <For each={g.group.items}>
           {(it) => (it.type === "group"
             ? <GroupView group={it} parent={g.group.path} depth={g.depth + 1} />
