@@ -2136,13 +2136,18 @@ describe("folder overview", () => {
     await waitFor(() => JSON.stringify(JSON.parse(b.host.files.get(WSJ)!).folders["Fa30/1-CS101/notes"]?.order) === '["max-flow.tex","intro.tex"]');
   });
 
-  it("a class overview links to its term's overview; the term's has no link up", async () => {
+  it("a class overview links to its term's overview, the term's to the home page, and the home page's has no link up", async () => {
     const b = await open();
     const up = await waitFor(() => b.root.querySelector<HTMLButtonElement>(".overview-pane .ov-up"));
     expect(up.textContent).toContain("Fa30");
     up.click();
     const shown = () => [...b.root.querySelectorAll<HTMLElement>(".overview-pane")].find((p) => p.style.display !== "none")!;
     await waitFor(() => shown().querySelector(".ov-h1")?.textContent === "Fa30");
+    const home = await waitFor(() => shown().querySelector<HTMLButtonElement>(".ov-up"));
+    expect(home.textContent).toContain("School");
+    home.click();
+    await waitFor(() => shown().querySelector(".ov-h1")?.textContent === "School");
+    expect([...b.root.querySelectorAll(".tab.overview .tab-name")].map((x) => x.textContent)).toEqual(["School"]);
     expect(shown().querySelector(".ov-up")).toBe(null);
   });
 

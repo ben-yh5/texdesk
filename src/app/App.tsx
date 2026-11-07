@@ -2925,6 +2925,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
               const k = w.folders[d]?.type;
               if (k) { up = { name: basename(d), path: d, label: typeLabel(k) }; break; }
             }
+            if (!up && rel) up = { name: basename(root()!), path: "", label: "home page" };
           }
           const values = entry?.fields ?? {};
           // All fields by default, except one that's just the folder's name again (a class's code).
@@ -3005,7 +3006,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         actionsFor={(kind, folder) => newActions(kind, folder)}
         links={(p) => ({ in: linkIndex().get(join(r, p))?.length ?? 0, out: outgoing().get(join(r, p)) ?? 0 })}
         onOpen={(p) => void openPath(join(r, p))}
-        onOverview={(p, newTab) => void openOverview(join(r, p), newTab ? {} : { replace: t()?.id })}
+        onOverview={(p, newTab) => void openOverview(p ? join(r, p) : r, newTab ? {} : { replace: t()?.id })}
         onReorder={(folder, names) => { keepOpen(t()?.id); void saveOrder(folder, names); }}
         onEditing={() => keepOpen(t()?.id)}
         pinned={() => pinned().includes(rel())}
