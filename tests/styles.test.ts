@@ -20,4 +20,15 @@ describe("styles", () => {
       .filter((sel) => kinds.some((k) => new RegExp(`(^|[^\\w-])\\.${k}(?![\\w-])`).test(sel.replace(new RegExp(`\\.tab\\.(${kinds.join("|")})(?![\\w-])`, "g"), ""))));
     expect(clashes).toEqual([]);
   });
+
+  it("the window itself never scrolls or rubber-bands, so a fast wheel can't push the app out of frame", () => {
+    const css = fs.readFileSync(path.join(__dirname, "../src/app/styles.css"), "utf8").replace(/\/\*[^]*?\*\//g, "");
+    const decls = (el: string) => [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+      .filter((m) => m[1].split(",").some((sel) => sel.trim() === el))
+      .map((m) => m[2]).join(";");
+    for (const el of ["html", "body"]) {
+      expect(decls(el)).toMatch(/overflow:\s*hidden/);
+      expect(decls(el)).toMatch(/overscroll-behavior:\s*none/);
+    }
+  });
 });
