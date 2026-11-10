@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Layout, SavedLayout, activeTab, deserialize, emptyLayout, findSpec, keepTab, openPreview, others, place, removeTab, renamePaths, reveal, serialize, split } from "../src/app/layout";
+import { Layout, SavedLayout, activeTab, deserialize, emptyLayout, findSpec, forget, keepTab, openPreview, others, place, remembered, removeTab, renamePaths, retarget, reveal, serialize, split, travel } from "../src/app/layout";
 
 const text = (path: string) => ({ kind: "text" as const, path });
 const names = (l: Layout) => l.groups.map((g) => g.tabs.map((t) => t.path + (t.id === g.active ? "*" : "")));
@@ -138,5 +138,60 @@ describe("editor groups", () => {
     // Dragging the preview tab somewhere keeps it.
     const z = l.groups[0].tabs[2];
     expect(place(l, z, g, 0).layout.groups[0].tabs[0]).toEqual({ id: z.id, kind: "overview", path: "/W/z" });
+  });
+});
+
+describe("tab history", () => {
+  const ov = (path: string) => ({ kind: "overview" as const, path });
+  const page = (l: Layout) => { const t = activeTab(l.groups[0])!; return { at: t.path, back: (t.back ?? []).map((s) => s.path), forward: (t.forward ?? []).map((s) => s.path) }; };
+  function browsing() {
+    let l = emptyLayout();
+    const g = l.groups[0].id;
+    l = place(l, ov("/W"), g).layout;
+    l = retarget(l, l.groups[0].active!, ov("/W/c"));
+    l = retarget(l, l.groups[0].active!, text("/W/c/a.tex"));
+    return l;
+  }
+
+  it("going somewhere in a tab puts where it was on its back history", () => {
+    const l = browsing();
+    expect(l.groups[0].tabs).toHaveLength(1);
+    expect(page(l)).toEqual({ at: "/W/c/a.tex", back: ["/W", "/W/c"], forward: [] });
+    expect(activeTab(l.groups[0])!.kind).toBe("text");
+  });
+
+  it("back and forward step through it; going somewhere new drops the forward pages", () => {
+    let l = browsing();
+    expect(travel(l, "nope", "back")).toBeNull();
+    l = travel(l, l.groups[0].active!, "back")!;
+    expect(page(l)).toEqual({ at: "/W/c", back: ["/W"], forward: ["/W/c/a.tex"] });
+    expect(activeTab(l.groups[0])!.kind).toBe("overview");
+    l = travel(l, l.groups[0].active!, "back")!;
+    expect(page(l)).toEqual({ at: "/W", back: [], forward: ["/W/c", "/W/c/a.tex"] });
+    expect(travel(l, l.groups[0].active!, "back")).toBeNull();
+    l = travel(l, l.groups[0].active!, "forward")!;
+    expect(page(l)).toEqual({ at: "/W/c", back: ["/W"], forward: ["/W/c/a.tex"] });
+    l = retarget(l, l.groups[0].active!, text("/W/c/b.tex"));
+    expect(page(l)).toEqual({ at: "/W/c/b.tex", back: ["/W", "/W/c"], forward: [] });
+    expect(remembered(l, text("/W/c/a.tex"))).toBe(false);
+  });
+
+  it("a page is kept in one place: opening it in a tab of its own takes it out of other tabs' history", () => {
+    let l = browsing();
+    l = travel(l, l.groups[0].active!, "back")!;
+    expect(remembered(l, text("/W/c/a.tex"))).toBe(true);
+    l = place(l, text("/W/c/a.tex"), l.groups[0].id).layout;
+    expect(l.groups[0].tabs[0].forward).toEqual([]);
+    expect(remembered(l, text("/W/c/a.tex"))).toBe(true);
+    // Going back to a page already in this tab's history moves it to the end, not twice.
+    l = retarget(l, l.groups[0].tabs[0].id, ov("/W"));
+    expect(l.groups[0].tabs[0].back!.map((s) => s.path)).toEqual(["/W/c"]);
+  });
+
+  it("history follows renames and forgets deleted files", () => {
+    let l = renamePaths(browsing(), (p) => (p.startsWith("/W/c") ? "/W/d" + p.slice(4) : null));
+    expect(page(l)).toEqual({ at: "/W/d/a.tex", back: ["/W", "/W/d"], forward: [] });
+    l = forget(l, (s) => s.path === "/W/d");
+    expect(page(l).back).toEqual(["/W"]);
   });
 });
