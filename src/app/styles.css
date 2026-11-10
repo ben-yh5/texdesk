@@ -82,6 +82,8 @@
 :root[data-theme="dark"] { color-scheme: dark; }
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; height: 100%; }
+/* The app fills the window; only panes scroll. Stops a fast wheel from scrolling or rubber-banding the whole page. */
+html, body { overflow: hidden; overscroll-behavior: none; }
 body { background: var(--td-bg); color: var(--td-fg); font-family: var(--td-ui); font-size: 13px; }
 .app { display: flex; flex-direction: column; height: 100%; }
 .editor-pane { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
