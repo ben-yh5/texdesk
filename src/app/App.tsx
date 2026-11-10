@@ -33,8 +33,9 @@ import { STARTERS } from "../workspace/starters";
 import { SearchFile, SearchHit, searchFile, searchFiles } from "../workspace/search";
 import { applyGlobalMigration, applyMigration, describePlan, hasLegacySetup, mergeSettings, planGlobalMigration, planMigration } from "../workspace/migrate";
 import { PaletteView, PickItem, createPalette } from "./Palette";
-import { ALL_KINDS, HeaderLink, Kinds, NavButtons, NewAction, Overview, ResolvedBlock } from "./Overview";
-import { OverviewInput, buildOverview, filesView, findGroup, folderMetas as metasOf, mergeOrder, siblingDocs, subfolderRows } from "../workspace/overview";
+import { ALL_KINDS, HeaderLink, Kinds, NewAction, Overview, ResolvedBlock } from "./Overview";
+import { NavButtons } from "./NavButtons";
+import { OverviewInput, buildOverview, filesView, findGroup, folderMetas as metasOf, mergeOrder, subfolderRows } from "../workspace/overview";
 import { DebugPanel } from "./DebugPanel";
 import { SettingsScope, SettingsView } from "./Settings";
 import { Plugin, createPlugin, ensurePluginsFolder, listPlugins, pluginIdFor, snippetFolders as pluginSnippetFolders, NEW_PLUGIN_FILE } from "../plugins/plugins";
@@ -2854,8 +2855,6 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     else await reconcile();
   }
   const canGo = (tabId: string | undefined, dir: "back" | "forward") => !!(tabId && findTab(layout(), (t) => t.id === tabId)?.tab[dir]?.length);
-  /** The tab showing the current file (the status bar's ‹ › go back and forward in it). */
-  const currentTab = () => { const p = path(); return p ? findSpec(layout(), { kind: "text", path: p })?.tab : undefined; };
 
 
   /** Keeps a preview tab open (double-clicked, or worked in: reordered, layout edited). */
@@ -2942,12 +2941,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     const folders = dir === r || typed.at(-1) === dir ? typed : [...typed, dir];
     return {
       folders: folders.map((d) => ({ label: basename(d), dir: d })),
-      docs: siblingDocs(overviewInput(), relative(r, src)).map((p) => join(r, p)),
-      current: src,
     };
   });
-  // The bar's order needs file times: load them when the pane shows.
-  createEffect(on(pdfVisible, (v) => { if (v) void refreshTimes(entries()); }, { defer: true }));
 
   /** A Header block's links from folder `rel`: "./x" is relative to it, anything else to the workspace. */
   function headerLinks(rel: string, links: string[]): HeaderLink[] {
@@ -3056,7 +3051,6 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         actionsFor={(kind, folder) => newActions(kind, folder)}
         links={(p) => ({ in: linkIndex().get(join(r, p))?.length ?? 0, out: outgoing().get(join(r, p)) ?? 0 })}
         onOpen={(p, newTab) => void (newTab || !t() ? openPath(join(r, p)) : openInTab(t()!.id, join(r, p)))}
-        nav={{ can: (dir) => canGo(t()?.id, dir), go: (dir) => void goHistory(dir, t()?.id) }}
         scroll={{ top: overviewScroll.get(t()?.path ?? "") ?? 0, save: (top) => { const p = t()?.path; if (p) overviewScroll.set(p, top); } }}
         onOverview={(p, newTab) => void openOverview(p ? join(r, p) : r, newTab ? {} : { replace: t()?.id })}
         onReorder={(folder, names) => { keepOpen(t()?.id); void saveOrder(folder, names); }}
@@ -3548,6 +3542,32 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     return `${i.snippets} snippet${i.snippets === 1 ? "" : "s"}${i.keys ? ` · ${i.keys} key${i.keys === 1 ? "" : "s"}` : ""}`;
   };
 
+  /** The bar's build and overview buttons: at the end of the tab bar, over the PDF when it shows. */
+  const barActions = () => (
+    <>
+      <Show when={isTex() && path()}>
+
+        <button
+          class={`tb-btn tb-save-pdf ${savedCopies().length ? "on" : ""}`}
+          title={savedCopies().length
+            ? `Save PDF as… — already saved to ${savedCopies().join(", ")} (updated on every build)`
+            : "Save PDF as… — a copy that updates on every build"}
+          onClick={() => runCommand("save_pdf")}
+        >
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5" /><path d="M2.5 11v2.5h11V11" /></svg>
+        </button>
+        <button class="tb-btn" title={`Show the cursor's line in the PDF (${shortcut("show_in_pdf")})`} onClick={() => runCommand("show_in_pdf")}>
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="5.5" /><circle cx="8" cy="8" r="1.6" fill="currentColor" /></svg>
+        </button>
+      </Show>
+      <Show when={root()}>
+        <button class="tb-btn tb-overview" title={`Overview of this folder (${shortcut("folder_overview")}) — the nearest class, project…`} onClick={() => runCommand("folder_overview")}>
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M2.5 3.5h11M2.5 7h7M2.5 10h7M2.5 13h7" /></svg>
+        </button>
+      </Show>
+    </>
+  );
+
   return (
     <div class="app">
       <div class="body">
@@ -3608,39 +3628,19 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
             onTabMenu={onTabMenu}
             onResize={(sizes) => setLayout(resize(layout(), sizes))}
             leading={(g) => (
-              <Show when={root() && g === layout().groups[0]?.id}>
-                <button class={`tb-btn ${sidebar() ? "on" : ""}`} title={`Show/hide sidebar (${shortcut("toggle_sidebar")})`} onClick={() => runCommand("toggle_sidebar")}>
-                  <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" /><path d="M6 2.5v11" /></svg>
-                </button>
+              // Top left, before the first tab: the sidebar switch, then back/forward in the front tab.
+              <Show when={g === layout().groups[0]?.id}>
+                <Show when={root()}>
+                  <button class={`tb-btn ${sidebar() ? "on" : ""}`} title={`Show/hide sidebar (${shortcut("toggle_sidebar")})`} onClick={() => runCommand("toggle_sidebar")}>
+                    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" /><path d="M6 2.5v11" /></svg>
+                  </button>
+                </Show>
+                <NavButtons can={(dir) => canGo(frontTab()?.id, dir)} go={(dir) => void goHistory(dir)} />
               </Show>
             )}
             actions={(g) => (
-              // Build actions sit at the end of the tab bar of the group with the current file.
-              <Show when={g === actionGroup()}>
-                <Show when={isTex() && path()}>
-                  <button
-                    class={`tb-btn tb-save-pdf ${savedCopies().length ? "on" : ""}`}
-                    title={savedCopies().length
-                      ? `Save PDF as… — already saved to ${savedCopies().join(", ")} (updated on every build)`
-                      : "Save PDF as… — a copy that updates on every build"}
-                    onClick={() => runCommand("save_pdf")}
-                  >
-                    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5" /><path d="M2.5 11v2.5h11V11" /></svg>
-                  </button>
-                  <button class="tb-btn" title={`Show the cursor's line in the PDF (${shortcut("show_in_pdf")})`} onClick={() => runCommand("show_in_pdf")}>
-                    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="5.5" /><circle cx="8" cy="8" r="1.6" fill="currentColor" /></svg>
-                  </button>
-                </Show>
-                <Show when={root()}>
-                  <button class="tb-btn tb-overview" title={`Overview of this folder (${shortcut("folder_overview")}) — the nearest class, project…`} onClick={() => runCommand("folder_overview")}>
-                    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M2.5 3.5h11M2.5 7h7M2.5 10h7M2.5 13h7" /></svg>
-                  </button>
-                </Show>
-                <button class={`tb-btn tb-pdf ${pdfShown() ? "on" : ""}`} title={`Show/hide the PDF (${shortcut("toggle_pdf")})`} onClick={() => runCommand("toggle_pdf")}>
-                  <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" /><path d="M10 2.5v11" /></svg>
-                  <span>PDF</span>
-                </button>
-              </Show>
+              // With the PDF hidden, the actions sit at the end of the tab bar of the group with the current file.
+              <Show when={g === actionGroup() && !pdfVisible()}>{barActions()}</Show>
             )}
             empty={() => (
               <Show
@@ -3690,9 +3690,11 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
           onDblClick={() => { setPdfWidth(clampPdf(pdfDefaultWidth())); prefs.set("pdfWidth", pdfWidth()); }}
         />
         <aside class="pdf-side" style={{ width: `${pdfWidth()}px`, display: pdfVisible() ? "" : "none" }}>
-          <Show when={pdfNav()}>
-            {(n) => <PdfNav folders={n().folders} docs={n().docs} current={n().current} onOverview={(d) => void openOverview(d)} onOpen={(p) => void openPath(p)} />}
-          </Show>
+          {/* The tab bar goes on over the PDF: its folders, then the bar's buttons. */}
+          <div class="pdf-nav">
+            <Show when={pdfNav()}>{(n) => <PdfNav folders={n().folders} onOverview={(d) => void openOverview(d)} />}</Show>
+            <div class="tabbar-actions">{barActions()}</div>
+          </div>
           <div class="pdf-side-body">
             <PdfPane
               host={host}
@@ -3767,7 +3769,6 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       </Show>
 
       <footer class="status">
-        <Show when={currentTab()}>{(c) => <NavButtons can={(dir) => canGo(c().id, dir)} go={(dir) => void goHistory(dir, c().id)} />}</Show>
         <span class="status-file" title={path() ?? root() ?? ""}>
           <Show when={crumbs().length} fallback={root() ? basename(root()!) : "TeXdesk"}>
             <For each={crumbs()}>

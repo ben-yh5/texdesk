@@ -1689,14 +1689,17 @@ describe("menus and toolbar", () => {
     expect(b.host.files.get(hw)).toContain("x");
   });
 
-  it("the tab bar's PDF button shows/hides the PDF", async () => {
-    const { root } = await bootWithCompiler();
-    const pdfButton = [...root.querySelectorAll<HTMLButtonElement>(".tb-btn")].find((b) => b.textContent?.includes("PDF"))!;
+  it("the bar's buttons sit over the PDF while it shows, else at the end of the tab bar; ⌘⇧P shows/hides it", async () => {
+    const { root, key } = await bootWithCompiler();
+    const where = () => root.querySelector(".tb-save-pdf")?.closest(".pdf-nav, .tabbar")?.className;
     expect(pdfPane(root)).not.toBeNull();
-    pdfButton.click();
+    expect(root.querySelector(".tb-pdf")).toBeNull();
+    expect(where()).toBe("pdf-nav");
+    key("p", { metaKey: true, shiftKey: true });
     await waitFor(() => !pdfPane(root));
-    pdfButton.click();
-    await waitFor(() => pdfPane(root));
+    expect(where()).toBe("tabbar");
+    key("p", { metaKey: true, shiftKey: true });
+    await waitFor(() => pdfPane(root) && where() === "pdf-nav");
   });
 
   function rightClick(el: Element, x = 5, y = 5) {
@@ -2056,23 +2059,23 @@ describe("folder overview", () => {
     await waitFor(() => names().length === 4 && names().includes("hw2.tex") && names().includes("1-CS101"));
   });
 
-  it("‹ › in the overview and status bar and a sideways swipe go back and forward; an overview keeps its scroll", async () => {
+  it("‹ › before the first tab and a sideways swipe go back and forward; an overview keeps its scroll", async () => {
     const b = await open();
     const names = () => [...b.root.querySelectorAll(".tab .tab-name")].map((x) => x.textContent);
     const row = (title: string) => [...b.root.querySelectorAll<HTMLElement>(".overview-pane .ov-row")].find((r) => r.querySelector(".ov-title")!.textContent === title)!;
-    const nav = (where: string, which: "Back" | "Forward") => b.root.querySelector<HTMLButtonElement>(`${where} .nav-btn[title^="${which}"]`)!;
+    const nav = (which: "Back" | "Forward") => b.root.querySelector<HTMLButtonElement>(`.tabbar-actions.leading .nav-btn[title^="${which}"]`)!;
     const list = () => b.root.querySelector<HTMLElement>(".overview-pane .ov-scroll")!;
-    expect(nav(".ov-toolbar", "Back").disabled).toBe(true);
+    expect(nav("Back").disabled).toBe(true);
     list().scrollTop = 40;
     list().dispatchEvent(new Event("scroll"));
     row("Max Flow").click();
     await waitFor(() => names().join() === "hw1.tex,flows.tex");
     await waitFor(() => b.editor().state.doc.toString() === "\\section*{Max Flow}");
-    expect(nav(".status", "Forward").disabled).toBe(true);
-    nav(".status", "Back").click();
+    expect(nav("Forward").disabled).toBe(true);
+    nav("Back").click();
     await waitFor(() => names().join() === "hw1.tex,1-CS101" && b.root.querySelector(".overview-pane .ov-row"));
     await waitFor(() => list().scrollTop === 40);
-    nav(".ov-toolbar", "Forward").click();
+    nav("Forward").click();
     await waitFor(() => names().join() === "hw1.tex,flows.tex");
     // Fingers to the right over the editor: back.
     const body = () => b.root.querySelectorAll<HTMLElement>(".group-body")[0];
@@ -2977,31 +2980,11 @@ describe("PDF pane bar", () => {
   const files = { ...coursework, [`${C}/hw/hw2.tex`]: doc("two"), [`${C}/hw/hw3.tex`]: doc("three"), [`${C}/hw/preamble.tex`]: "\\usepackage{amsmath}" };
   const bar = (root: HTMLElement) => pdfPane(root)?.querySelector<HTMLElement>(".pdf-nav") ?? null;
   const crumbs = (root: HTMLElement) => [...bar(root)!.querySelectorAll(".pdf-nav-crumb")].map((x) => x.textContent);
-  const docs = (root: HTMLElement) => [...bar(root)!.querySelectorAll("option")].map((x) => x.textContent);
-  const button = (root: HTMLElement, cls: string) => bar(root)!.querySelector<HTMLButtonElement>(cls)!;
-
-  it("shows the document's folders and steps through the documents next to it, in the folder's order", async () => {
-    // Oldest first: hw3, hw1, hw2 (not by name).
-    const b = await boot(files, `${C}/hw/hw1.tex`, null, (h) => {
-      h.times[`${C}/hw/hw3.tex`] = { created: 1, modified: 1 };
-      h.times[`${C}/hw/hw1.tex`] = { created: 2, modified: 2 };
-      h.times[`${C}/hw/hw2.tex`] = { created: 3, modified: 3 };
-    });
-    await waitFor(() => bar(b.root) && docs(b.root).length === 3);
+  it("shows the document's folders, each opening its overview", async () => {
+    const b = await boot(files, `${C}/hw/hw1.tex`);
+    await waitFor(() => bar(b.root)?.querySelector(".pdf-nav-crumb"));
     expect(crumbs(b.root)).toEqual(["Fa30", "1-CS101", "hw"]);
-    // Documents only: not preamble.tex (no \documentclass), the PDF or the zip.
-    expect(docs(b.root)).toEqual(["hw3", "hw1", "hw2"]);
-
-    button(b.root, ".pdf-nav-next").click();
-    await waitFor(() => b.editor().state.doc.toString().includes("two"));
-    await waitFor(() => button(b.root, ".pdf-nav-next").disabled);
-
-    const select = bar(b.root)!.querySelector<HTMLSelectElement>("select")!;
-    select.value = `${C}/hw/hw3.tex`;
-    select.dispatchEvent(new Event("change"));
-    await waitFor(() => b.editor().state.doc.toString().includes("three"));
-    await waitFor(() => button(b.root, ".pdf-nav-prev").disabled);
-
+    expect(bar(b.root)!.querySelector("select")).toBeNull();
     [...bar(b.root)!.querySelectorAll<HTMLElement>(".pdf-nav-crumb")].find((x) => x.textContent === "1-CS101")!.click();
     await waitFor(() => b.root.querySelector(".overview-pane .ov-h1")?.textContent === "1-CS101");
   });
