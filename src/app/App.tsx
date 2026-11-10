@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount, untrack } from "solid-js";
 import { EditorView } from "@codemirror/view";
-import { EditorSelection, EditorState, Extension, Transaction } from "@codemirror/state";
+import { EditorSelection, EditorState, Extension, StateEffect, Transaction } from "@codemirror/state";
 import { LanguageDescription } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { FileTimes, Host, MenuEntry, MenuSection, WalkEntry, basename, dirname, extname, join, relative } from "../host/types";
@@ -57,7 +57,7 @@ import { PdfPane, PdfPaneApi } from "./PdfPane";
 import { PdfNav } from "./PdfNav";
 import {
   Layout, Tab, TabSpec, activate, activeTab, deserialize, emptyLayout, findSpec, findTab, groupById, keepTab, openPreview, others, place,
-  removeTab, renamePaths, resize, retarget, reveal as revealTab, serialize, split, SavedLayout,
+  forget, remembered, removeTab, renamePaths, resize, retarget, reveal as revealTab, serialize, split, travel, SavedLayout,
 } from "./layout";
 import { dragging } from "./dnd";
 import type { Anchor } from "../preview/viewer";
@@ -339,8 +339,10 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   const views = new Map<string, EditorView>();
   /** Group → file its view shows. */
   const viewDoc = new Map<string, string | null>();
-  /** States of open text files that aren't on screen. */
+  /** States of open text files that aren't on screen (in a tab, or a tab's back/forward history). */
   const docs = new Map<string, EditorState>();
+  /** Where each of those was scrolled to. */
+  const scrolls = new Map<string, StateEffect<unknown>>();
   /** Each open file's text as TeXdesk last read or wrote it, to tell changes made elsewhere from its own. */
   const onDisk = new Map<string, string>();
   const pdfAnchors = new Map<string, Anchor>();
@@ -354,6 +356,13 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
 
   const shownIn = (p: string) => [...viewDoc].find(([, d]) => d === p)?.[0] ?? null;
   const hasTab = (p: string) => !!findSpec(layout(), { kind: "text", path: p });
+  /** Is `p` in a tab or a tab's history (so its state is kept)? */
+  const kept = (p: string) => remembered(layout(), { kind: "text", path: p });
+  /** Takes `p`'s state (cursor, undo history, scroll) off view `v`, to show it again later. */
+  function keepState(p: string, v: EditorView) {
+    docs.set(p, v.state);
+    scrolls.set(p, v.scrollSnapshot());
+  }
 
   async function loadState(p: string): Promise<EditorState | null> {
     let text: string;
@@ -404,7 +413,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   function unmountEditor(g: string) {
     const v = views.get(g);
     const d = viewDoc.get(g);
-    if (v && d && hasTab(d)) docs.set(d, v.state);
+    if (v && d && kept(d)) keepState(d, v);
     if (view === v) view = undefined;
     v?.destroy();
     views.delete(g);
@@ -427,7 +436,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     // carries its unsaved edits and undo history), then give each view its file.
     for (const [gid, have] of viewDoc) {
       if (!have || wanted(gid) === have) continue;
-      if (hasTab(have)) docs.set(have, views.get(gid)!.state);
+      if (kept(have)) keepState(have, views.get(gid)!);
       viewDoc.set(gid, null);
       if (!wanted(gid)) views.get(gid)!.setState(EditorState.create());
     }
@@ -441,9 +450,12 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         docs.delete(want);
       }
       views.get(gid)!.setState(state ?? EditorState.create());
+      const scroll = want && scrolls.get(want);
+      if (scroll) views.get(gid)!.dispatch({ effects: scroll });
       viewDoc.set(gid, want);
     }
-    for (const d of [...docs.keys()]) if (!hasTab(d)) docs.delete(d);
+    for (const d of [...docs.keys()]) if (!kept(d)) docs.delete(d);
+    for (const d of [...scrolls.keys()]) if (!kept(d)) scrolls.delete(d);
     // Settle the current file: keep it if it's still open, else take a visible one.
     const cur = path();
     const g = cur ? shownIn(cur) : null;
@@ -492,6 +504,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         const st = await loadState(p);
         if (!st) return;
         docs.set(p, st);
+        scrolls.delete(p);
       }
     }
     const spec: TabSpec = { kind: "text", path: p };
@@ -1919,6 +1932,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     // Close its tabs (and any tabs for files inside a deleted folder).
     let l = layout();
     for (const g of l.groups) for (const t of g.tabs) if (t.path && (t.path === abs || t.path.startsWith(abs + "/"))) l = removeTab(l, t.id);
+    l = forget(l, (s) => !!s.path && (s.path === abs || s.path.startsWith(abs + "/")));
     for (const [g, d] of viewDoc) if (d && (d === abs || d.startsWith(abs + "/"))) viewDoc.set(g, null);
     setLayout(l);
     await reconcile();
@@ -2808,6 +2822,36 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     await reconcile();
   }
 
+  /**
+   * A file clicked in an overview, shown in the overview's tab like a link in a browser tab
+   * (⌘[ comes back). Folders, the open document's own build (the PDF pane), files open in
+   * another tab and files TeXdesk can't show go where they would from anywhere else.
+   */
+  async function openInTab(tabId: string, p: string) {
+    if (await isDirectory(p)) return openOverview(p, { replace: tabId });
+    const pdf = extname(p) === "pdf";
+    const r = root();
+    const src = pdf && r ? generated().get(relative(r, p)) : undefined;
+    const spec: TabSpec = { kind: pdf ? "pdf" : "text", path: p };
+    if ((src && r && join(r, src) === outputSource()) || (!pdf && BINARY_EXT.has(extname(p))) || findSpec(layout(), spec)) return openPath(p);
+    if (!(await save())) return;
+    setLayout(retarget(layout(), tabId, spec));
+    if (pdf) await reconcile();
+    else await showFile(p);
+  }
+
+  /** ⌘[ / ⌘]: back or forward a page in the front tab's history. */
+  async function goHistory(dir: "back" | "forward") {
+    const t = frontTab();
+    const next = t && travel(layout(), t.id, dir);
+    if (!next) return;
+    if (!(await save())) return;
+    setLayout(next);
+    const now = frontTab();
+    if (now?.kind === "text") await showFile(now.path!);
+    else await reconcile();
+  }
+
   /** Keeps a preview tab open (double-clicked, or worked in: reordered, layout edited). */
   function keepOpen(tabId: string | undefined) {
     if (tabId && findTab(layout(), (t) => t.id === tabId)?.tab.preview) setLayout(keepTab(layout(), tabId));
@@ -3005,7 +3049,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         typeLabel={typeLabel}
         actionsFor={(kind, folder) => newActions(kind, folder)}
         links={(p) => ({ in: linkIndex().get(join(r, p))?.length ?? 0, out: outgoing().get(join(r, p)) ?? 0 })}
-        onOpen={(p) => void openPath(join(r, p))}
+        onOpen={(p, newTab) => void (newTab || !t() ? openPath(join(r, p)) : openInTab(t()!.id, join(r, p)))}
         onOverview={(p, newTab) => void openOverview(p ? join(r, p) : r, newTab ? {} : { replace: t()?.id })}
         onReorder={(folder, names) => { keepOpen(t()?.id); void saveOrder(folder, names); }}
         onEditing={() => keepOpen(t()?.id)}
@@ -3066,6 +3110,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     { id: "go_overview", label: "Go to overview…", run: goToOverview, when: () => !!root(), needs: OPEN_FOLDER },
     { id: "folder_overview", label: "Overview of this folder", key: "folder_overview", run: folderOverviewCommand, when: () => !!root(), needs: OPEN_FOLDER },
     { id: "go_home", label: "Workspace home page", run: () => openOverview(root()!), when: () => !!root(), needs: OPEN_FOLDER },
+    { id: "go_back", label: "Back", key: "go_back", run: () => goHistory("back"), when: () => !!frontTab()?.back?.length, needs: "somewhere to go back to" },
+    { id: "go_forward", label: "Forward", key: "go_forward", run: () => goHistory("forward"), when: () => !!frontTab()?.forward?.length, needs: "somewhere to go forward to" },
     { id: "new_folder", label: "New folder…", run: newFolder, when: () => !!root(), needs: OPEN_FOLDER },
     { id: "rename_file", label: "Rename file…", run: renameOpenFile, when: () => !!root() && hasFile(), needs: "an open file" },
     { id: "trash_file", label: "Move file to Trash", run: () => { const r = root(), p = path(); if (r && p) void deleteEntry(relative(r, p)); }, when: () => !!root() && hasFile(), needs: "an open file" },
@@ -3208,7 +3254,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         item("build_log", "Show Build Log"), "separator",
         item("fix_spelling", "Fix Previous Misspelling"),
       ] },
-      { label: "Go", items: [item("find_file", "Go to File…"), item("find_in_files", "Search in Files…"), item("go_overview", "Go to Overview…"), item("folder_overview", "Overview of This Folder"), item("go_home", "Workspace Home Page"), item("follow_link", "Follow Link")] },
+      { label: "Go", items: [item("go_back"), item("go_forward"), "separator", item("find_file", "Go to File…"), item("find_in_files", "Search in Files…"), item("go_overview", "Go to Overview…"), item("folder_overview", "Overview of This Folder"), item("go_home", "Workspace Home Page"), item("follow_link", "Follow Link")] },
       { label: "Window", items: [{ native: "minimize" }, "separator", { native: "bringAllToFront" }] },
       { label: "Help", items: [item("show_tour", "Welcome Tour")] },
     ];
@@ -3420,6 +3466,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       ["follow_link", followLinkCommand, () => isTex() && !!view?.hasFocus],
       ["insert_link", insertLink, () => isTex() && !!view?.hasFocus],
       ["folder_overview", () => runCommand("folder_overview"), () => !!root()],
+      ["go_back", () => goHistory("back"), () => !!frontTab()?.back?.length],
+      ["go_forward", () => goHistory("forward"), () => !!frontTab()?.forward?.length],
     ];
     const onKey = (e: KeyboardEvent) => {
       // The palette, Settings, the tour and the diagram editor handle their own keys.

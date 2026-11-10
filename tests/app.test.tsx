@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { EditorView } from "@codemirror/view";
-import { undo } from "@codemirror/commands";
+import { undo, undoDepth } from "@codemirror/commands";
 import { currentCompletions, setSelectedCompletion } from "@codemirror/autocomplete";
 import { App } from "../src/app/App";
 import { formatWorkspace, emptyWorkspace, type WorkspaceFile } from "../src/workspace/model";
@@ -2019,6 +2019,36 @@ describe("folder overview", () => {
     const cls = await waitFor(() => [...b.root.querySelectorAll<HTMLElement>(".overview-pane .ov-sub-row, .overview-pane .ov-group-head")].find((x) => x.textContent?.includes("1-CS101")));
     cls.dispatchEvent(new MouseEvent("click", { bubbles: true, metaKey: true, ctrlKey: true }));
     await waitFor(() => names().join() === "Fa30,1-CS101");
+  });
+
+  it("a file clicked in an overview loads in its tab; ⌘[ / ⌘] go back and forward, keeping cursor and undo", async () => {
+    const b = await open();
+    const names = () => [...b.root.querySelectorAll(".tab .tab-name")].map((x) => x.textContent);
+    const row = (title: string) => [...b.root.querySelectorAll<HTMLElement>(".overview-pane .ov-row")].find((r) => r.querySelector(".ov-title")!.textContent === title)!;
+    expect(names()).toEqual(["hw1.tex", "1-CS101"]);
+    row("Max Flow").click();
+    await waitFor(() => names().join() === "hw1.tex,flows.tex");
+    await waitFor(() => b.editor().state.doc.toString() === "\\section*{Max Flow}");
+    // Typing doesn't add pages; the edit is saved on the way out.
+    b.editor().dispatch({ changes: { from: 0, insert: "% " }, selection: { anchor: 2 }, userEvent: "input.type" });
+    b.key("[", { metaKey: true });
+    await waitFor(() => names().join() === "hw1.tex,1-CS101" && b.root.querySelector(".overview-pane .ov-row"));
+    expect(b.host.files.get(`${C}/notes/flows.tex`)).toBe("% \\section*{Max Flow}");
+    b.key("]", { metaKey: true });
+    await waitFor(() => names().join() === "hw1.tex,flows.tex");
+    const v = await waitFor(() => b.editor().state.doc.toString().startsWith("% ") && b.editor());
+    expect(v.state.selection.main.head).toBe(2);
+    expect(undoDepth(v.state)).toBe(1);
+    b.key("[", { metaKey: true });
+    await waitFor(() => b.root.querySelector(".overview-pane .ov-row"));
+    // ⌘-click and middle-click open a tab of their own.
+    row("Introduction").dispatchEvent(new MouseEvent("click", { bubbles: true, ...modKey }));
+    await waitFor(() => names().join() === "hw1.tex,1-CS101,intro.tex");
+    b.key("[", { metaKey: true }); // intro.tex has nowhere to go back to
+    await settle(30);
+    expect(names()).toEqual(["hw1.tex", "1-CS101", "intro.tex"]);
+    row("hw2.tex").dispatchEvent(new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    await waitFor(() => names().length === 4 && names().includes("hw2.tex") && names().includes("1-CS101"));
   });
 
   it("the TeX / PDF / Other toggles hide kinds of files, remembered for the folder", async () => {

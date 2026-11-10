@@ -8,7 +8,8 @@ import { Host, join } from "../host/types";
 export type CommandId =
   | "find_file" | "find_in_files" | "command_palette" | "open_folder" | "open_file" | "toggle_sidebar" | "toggle_pdf"
   | "show_in_pdf" | "paste_as_code" | "paste_image" | "toggle_math_preview" | "follow_link" | "insert_link"
-  | "settings" | "close_tab" | "split_right" | "new_file" | "bracket_size" | "fix_spelling" | "jump_out" | "folder_overview" | "edit_diagram";
+  | "settings" | "close_tab" | "split_right" | "new_file" | "bracket_size" | "fix_spelling" | "jump_out" | "folder_overview" | "edit_diagram"
+  | "go_back" | "go_forward";
 
 export const DEFAULT_KEYS: Record<CommandId, string> = {
   find_file: "Mod-k",
@@ -33,6 +34,8 @@ export const DEFAULT_KEYS: Record<CommandId, string> = {
   split_right: "Mod-Alt-\\",
   folder_overview: "Mod-Alt-o",
   edit_diagram: "Mod-Shift-d",
+  go_back: "Mod-[",
+  go_forward: "Mod-]",
 };
 
 export interface EditorSettings {
