@@ -3466,8 +3466,9 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       ["follow_link", followLinkCommand, () => isTex() && !!view?.hasFocus],
       ["insert_link", insertLink, () => isTex() && !!view?.hasFocus],
       ["folder_overview", () => runCommand("folder_overview"), () => !!root()],
-      ["go_back", () => goHistory("back"), () => !!frontTab()?.back?.length],
-      ["go_forward", () => goHistory("forward"), () => !!frontTab()?.forward?.length],
+      // Always taken, so they never fall through to the editor's indent/outdent.
+      ["go_back", () => goHistory("back"), () => true],
+      ["go_forward", () => goHistory("forward"), () => true],
     ];
     const onKey = (e: KeyboardEvent) => {
       // The palette, Settings, the tour and the diagram editor handle their own keys.

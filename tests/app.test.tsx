@@ -2044,9 +2044,14 @@ describe("folder overview", () => {
     // ⌘-click and middle-click open a tab of their own.
     row("Introduction").dispatchEvent(new MouseEvent("click", { bubbles: true, ...modKey }));
     await waitFor(() => names().join() === "hw1.tex,1-CS101,intro.tex");
-    b.key("[", { metaKey: true }); // intro.tex has nowhere to go back to
+    // intro.tex has nowhere to go back to, and ⌘[ doesn't outdent it either.
+    const intro = await waitFor(() => b.editor().state.doc.toString().startsWith("\\documentclass") && b.editor());
+    intro.dispatch({ changes: { from: 0, insert: "  " } });
+    intro.focus();
+    intro.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "[", bubbles: true, cancelable: true, ...modKey }));
     await settle(30);
     expect(names()).toEqual(["hw1.tex", "1-CS101", "intro.tex"]);
+    expect(intro.state.doc.toString().startsWith("  \\documentclass")).toBe(true);
     row("hw2.tex").dispatchEvent(new MouseEvent("auxclick", { bubbles: true, button: 1 }));
     await waitFor(() => names().length === 4 && names().includes("hw2.tex") && names().includes("1-CS101"));
   });
