@@ -61,6 +61,10 @@ export interface OverviewProps {
   visible: () => boolean;
   /** Opens a file (relative path) in this tab; `newTab` (⌘-click, middle-click): in a tab of its own. */
   onOpen(path: string, newTab?: boolean): void;
+  /** Back/forward in this tab's history: whether each way has somewhere to go, and going. */
+  nav?: { can: (dir: "back" | "forward") => boolean; go: (dir: "back" | "forward") => void };
+  /** Where the list was scrolled to last time (restored when it shows), and keeping it. */
+  scroll?: { top: number; save: (top: number) => void };
   /** Goes to a folder's overview (relative path), in this tab; `newTab` (⌘-click): in a tab of its own. */
   onOverview(path: string, newTab?: boolean): void;
   onReorder(folder: string, names: string[]): void;
@@ -359,6 +363,7 @@ export function Overview(props: OverviewProps) {
   return (
     <div class="overview-pane" style={{ display: props.visible() ? "flex" : "none" }}>
       <div class="ov-toolbar">
+        <Show when={props.nav}>{(n) => <NavButtons can={n().can} go={n().go} />}</Show>
         <Show when={props.layout().own}><span class="ov-note">This folder has its own layout</span></Show>
         <span class="ov-spacer" />
         <Show when={!editing() && props.onKinds}>
@@ -390,7 +395,8 @@ export function Overview(props: OverviewProps) {
       <Show when={!editing()}>
         <Show when={props.blocks()} fallback={<div class="ov-empty">Loading…</div>}>
           {(blocks) => (
-            <div class="ov-scroll">
+            <div class="ov-scroll" ref={(el) => { const top = props.scroll?.top; if (top) requestAnimationFrame(() => { el.scrollTop = top; }); }}
+              onScroll={(e) => props.scroll?.save(e.currentTarget.scrollTop)}>
               <BlocksView blocks={blocks()} depth={0} />
               <Show when={!blocks().length}><div class="ov-empty">This layout has no blocks — click Edit layout to add some</div></Show>
               <Show when={blocks().some((b) => b.type === "files" && b.reorderable)}>
@@ -401,6 +407,20 @@ export function Overview(props: OverviewProps) {
         </Show>
       </Show>
     </div>
+  );
+}
+
+/** ‹ › back/forward buttons (shared with the status bar). */
+export function NavButtons(p: { can: (dir: "back" | "forward") => boolean; go: (dir: "back" | "forward") => void }) {
+  return (
+    <span class="nav-btns">
+      <button class="nav-btn" title="Back (⌘[)" disabled={!p.can("back")} onClick={() => p.go("back")}>
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3.5 5.5 8l4.5 4.5" /></svg>
+      </button>
+      <button class="nav-btn" title="Forward (⌘])" disabled={!p.can("forward")} onClick={() => p.go("forward")}>
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5 10.5 8 6 12.5" /></svg>
+      </button>
+    </span>
   );
 }
 

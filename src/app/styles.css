@@ -550,6 +550,11 @@ body.resizing .pdf-pane, body.resizing .editor { pointer-events: none; }
 .ov-dragging { opacity: 0.4; }
 .ov-empty { color: var(--td-muted); padding: 4px 6px; font-style: italic; }
 .ov-hint { color: var(--td-muted); font-size: 11px; margin-top: 18px; }
+.nav-btns { display: inline-flex; gap: 2px; }
+.nav-btn { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 20px; padding: 0; background: none; border: none; border-radius: 4px; color: var(--td-muted); cursor: pointer; }
+.nav-btn:hover:not(:disabled) { color: var(--td-fg); background: var(--td-active-line); }
+.nav-btn:disabled { opacity: 0.35; cursor: default; }
+.status .nav-btns { margin-left: -6px; margin-right: -8px; }
 .status-crumb { background: none; border: none; padding: 0; font: inherit; color: inherit; cursor: pointer; }
 .status-crumb:hover { color: var(--td-accent); text-decoration: underline; }
 

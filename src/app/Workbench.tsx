@@ -127,6 +127,7 @@ export function Workbench(props: WorkbenchProps) {
         {(g) => (
           <section
             class={`group ${props.layout.activeGroup === p.id ? "focused" : ""}`}
+            data-group={p.id}
             // Grow by the group's share of the total: flex-grow values adding up to less
             // than 1 leave part of the row empty (a lone group of size 0.5 fills half).
             style={{ flex: `${(g().size / totalSize()) * props.layout.groups.length} 1 0` }}

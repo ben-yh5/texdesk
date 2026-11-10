@@ -2056,6 +2056,33 @@ describe("folder overview", () => {
     await waitFor(() => names().length === 4 && names().includes("hw2.tex") && names().includes("1-CS101"));
   });
 
+  it("‹ › in the overview and status bar and a sideways swipe go back and forward; an overview keeps its scroll", async () => {
+    const b = await open();
+    const names = () => [...b.root.querySelectorAll(".tab .tab-name")].map((x) => x.textContent);
+    const row = (title: string) => [...b.root.querySelectorAll<HTMLElement>(".overview-pane .ov-row")].find((r) => r.querySelector(".ov-title")!.textContent === title)!;
+    const nav = (where: string, which: "Back" | "Forward") => b.root.querySelector<HTMLButtonElement>(`${where} .nav-btn[title^="${which}"]`)!;
+    const list = () => b.root.querySelector<HTMLElement>(".overview-pane .ov-scroll")!;
+    expect(nav(".ov-toolbar", "Back").disabled).toBe(true);
+    list().scrollTop = 40;
+    list().dispatchEvent(new Event("scroll"));
+    row("Max Flow").click();
+    await waitFor(() => names().join() === "hw1.tex,flows.tex");
+    await waitFor(() => b.editor().state.doc.toString() === "\\section*{Max Flow}");
+    expect(nav(".status", "Forward").disabled).toBe(true);
+    nav(".status", "Back").click();
+    await waitFor(() => names().join() === "hw1.tex,1-CS101" && b.root.querySelector(".overview-pane .ov-row"));
+    await waitFor(() => list().scrollTop === 40);
+    nav(".ov-toolbar", "Forward").click();
+    await waitFor(() => names().join() === "hw1.tex,flows.tex");
+    // Fingers to the right over the editor: back.
+    const body = () => b.root.querySelectorAll<HTMLElement>(".group-body")[0];
+    for (let i = 0; i < 4; i++) body().querySelector(".cm-content")!.dispatchEvent(new WheelEvent("wheel", { deltaX: -40, bubbles: true }));
+    await waitFor(() => names().join() === "hw1.tex,1-CS101");
+    await settle(250);
+    for (let i = 0; i < 4; i++) list().dispatchEvent(new WheelEvent("wheel", { deltaX: 40, bubbles: true }));
+    await waitFor(() => names().join() === "hw1.tex,flows.tex");
+  });
+
   it("the TeX / PDF / Other toggles hide kinds of files, remembered for the folder", async () => {
     const b = await open();
     const kind = (label: string) => [...b.root.querySelectorAll<HTMLElement>(".ov-kind")].find((x) => x.textContent === label)!;

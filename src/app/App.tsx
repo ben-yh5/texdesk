@@ -33,7 +33,7 @@ import { STARTERS } from "../workspace/starters";
 import { SearchFile, SearchHit, searchFile, searchFiles } from "../workspace/search";
 import { applyGlobalMigration, applyMigration, describePlan, hasLegacySetup, mergeSettings, planGlobalMigration, planMigration } from "../workspace/migrate";
 import { PaletteView, PickItem, createPalette } from "./Palette";
-import { ALL_KINDS, HeaderLink, Kinds, NewAction, Overview, ResolvedBlock } from "./Overview";
+import { ALL_KINDS, HeaderLink, Kinds, NavButtons, NewAction, Overview, ResolvedBlock } from "./Overview";
 import { OverviewInput, buildOverview, filesView, findGroup, folderMetas as metasOf, mergeOrder, siblingDocs, subfolderRows } from "../workspace/overview";
 import { DebugPanel } from "./DebugPanel";
 import { SettingsScope, SettingsView } from "./Settings";
@@ -343,6 +343,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   const docs = new Map<string, EditorState>();
   /** Where each of those was scrolled to. */
   const scrolls = new Map<string, StateEffect<unknown>>();
+  /** Where each overview in a tab or a tab's history (by folder) was scrolled to, so coming back lands there again. */
+  const overviewScroll = new Map<string, number>();
   /** Each open file's text as TeXdesk last read or wrote it, to tell changes made elsewhere from its own. */
   const onDisk = new Map<string, string>();
   const pdfAnchors = new Map<string, Anchor>();
@@ -456,6 +458,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     }
     for (const d of [...docs.keys()]) if (!kept(d)) docs.delete(d);
     for (const d of [...scrolls.keys()]) if (!kept(d)) scrolls.delete(d);
+    for (const d of [...overviewScroll.keys()]) if (!remembered(layout(), { kind: "overview", path: d })) overviewScroll.delete(d);
     // Settle the current file: keep it if it's still open, else take a visible one.
     const cur = path();
     const g = cur ? shownIn(cur) : null;
@@ -2840,10 +2843,9 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     else await showFile(p);
   }
 
-  /** ⌘[ / ⌘]: back or forward a page in the front tab's history. */
-  async function goHistory(dir: "back" | "forward") {
-    const t = frontTab();
-    const next = t && travel(layout(), t.id, dir);
+  /** ⌘[ / ⌘], ‹ ›, a swipe: back or forward a page in tab `tabId`'s history (default: the front tab's). */
+  async function goHistory(dir: "back" | "forward", tabId = frontTab()?.id) {
+    const next = tabId ? travel(layout(), tabId, dir) : null;
     if (!next) return;
     if (!(await save())) return;
     setLayout(next);
@@ -2851,6 +2853,10 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     if (now?.kind === "text") await showFile(now.path!);
     else await reconcile();
   }
+  const canGo = (tabId: string | undefined, dir: "back" | "forward") => !!(tabId && findTab(layout(), (t) => t.id === tabId)?.tab[dir]?.length);
+  /** The tab showing the current file (the status bar's ‹ › go back and forward in it). */
+  const currentTab = () => { const p = path(); return p ? findSpec(layout(), { kind: "text", path: p })?.tab : undefined; };
+
 
   /** Keeps a preview tab open (double-clicked, or worked in: reordered, layout edited). */
   function keepOpen(tabId: string | undefined) {
@@ -3050,6 +3056,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         actionsFor={(kind, folder) => newActions(kind, folder)}
         links={(p) => ({ in: linkIndex().get(join(r, p))?.length ?? 0, out: outgoing().get(join(r, p)) ?? 0 })}
         onOpen={(p, newTab) => void (newTab || !t() ? openPath(join(r, p)) : openInTab(t()!.id, join(r, p)))}
+        nav={{ can: (dir) => canGo(t()?.id, dir), go: (dir) => void goHistory(dir, t()?.id) }}
+        scroll={{ top: overviewScroll.get(t()?.path ?? "") ?? 0, save: (top) => { const p = t()?.path; if (p) overviewScroll.set(p, top); } }}
         onOverview={(p, newTab) => void openOverview(p ? join(r, p) : r, newTab ? {} : { replace: t()?.id })}
         onReorder={(folder, names) => { keepOpen(t()?.id); void saveOrder(folder, names); }}
         onEditing={() => keepOpen(t()?.id)}
@@ -3440,6 +3448,30 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     if (cmd) await cmd.run();
   }
 
+  // ---- trackpad swipe ----------------------------------------------------------------
+  //
+  // A two-finger swipe sideways over a group goes back (fingers to the right) or forward in
+  // its front tab, like Safari. The webview has no swipe event, so this adds up a gesture's
+  // sideways scrolling, unless something under the pointer can scroll that way itself.
+
+  let swipe = { dx: 0, done: false, timer: 0 };
+  function onSwipe(e: WheelEvent) {
+    clearTimeout(swipe.timer);
+    swipe.timer = window.setTimeout(() => { swipe = { dx: 0, done: false, timer: 0 }; }, 200);
+    if (swipe.done || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+    for (let el = e.target as HTMLElement | null; el; el = el.parentElement) {
+      if (el.scrollWidth > el.clientWidth && (e.deltaX < 0 ? el.scrollLeft > 0 : el.scrollLeft + el.clientWidth < el.scrollWidth)) return;
+    }
+    const g = (e.target as HTMLElement).closest?.("[data-group] .group-body")?.closest("[data-group]")?.getAttribute("data-group");
+    const tab = g ? groupById(layout(), g) : null;
+    const t = tab && activeTab(tab);
+    if (!t) return;
+    swipe.dx += e.deltaX;
+    if (Math.abs(swipe.dx) < 120) return;
+    swipe.done = true;
+    void goHistory(swipe.dx < 0 ? "back" : "forward", t.id);
+  }
+
   // ---- startup & shortcuts --------------------------------------------------------
 
   onMount(async () => {
@@ -3488,7 +3520,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     window.addEventListener("keydown", onKey, true);
     const onBlur = () => void save();
     window.addEventListener("blur", onBlur);
-    onCleanup(() => { window.removeEventListener("keydown", onKey, true); window.removeEventListener("blur", onBlur); });
+    window.addEventListener("wheel", onSwipe, { passive: true });
+    onCleanup(() => { window.removeEventListener("keydown", onKey, true); window.removeEventListener("blur", onBlur); window.removeEventListener("wheel", onSwipe); });
 
     await startGlobal();
     try {
@@ -3734,6 +3767,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       </Show>
 
       <footer class="status">
+        <Show when={currentTab()}>{(c) => <NavButtons can={(dir) => canGo(c().id, dir)} go={(dir) => void goHistory(dir, c().id)} />}</Show>
         <span class="status-file" title={path() ?? root() ?? ""}>
           <Show when={crumbs().length} fallback={root() ? basename(root()!) : "TeXdesk"}>
             <For each={crumbs()}>
