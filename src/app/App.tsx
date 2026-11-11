@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount, untrack } from "solid-js";
 import { EditorView } from "@codemirror/view";
-import { EditorSelection, EditorState, Extension, Transaction } from "@codemirror/state";
+import { EditorSelection, EditorState, Extension, StateEffect, Transaction } from "@codemirror/state";
 import { LanguageDescription } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { FileTimes, Host, MenuEntry, MenuSection, WalkEntry, basename, dirname, extname, join, relative } from "../host/types";
@@ -33,8 +33,8 @@ import { STARTERS } from "../workspace/starters";
 import { SearchFile, SearchHit, searchFile, searchFiles } from "../workspace/search";
 import { applyGlobalMigration, applyMigration, describePlan, hasLegacySetup, mergeSettings, planGlobalMigration, planMigration } from "../workspace/migrate";
 import { PaletteView, PickItem, createPalette } from "./Palette";
-import { ALL_KINDS, HeaderLink, Kinds, NewAction, Overview, ResolvedBlock } from "./Overview";
-import { OverviewInput, buildOverview, filesView, findGroup, folderMetas as metasOf, mergeOrder, siblingDocs, subfolderRows } from "../workspace/overview";
+import { ALL_KINDS, HeaderLink, Kinds, MenuTarget, NewAction, Overview, ResolvedBlock } from "./Overview";
+import { OverviewInput, buildOverview, filesView, findGroup, folderMetas as metasOf, mergeOrder, subfolderRows } from "../workspace/overview";
 import { DebugPanel } from "./DebugPanel";
 import { SettingsScope, SettingsView } from "./Settings";
 import { Plugin, createPlugin, ensurePluginsFolder, listPlugins, pluginIdFor, snippetFolders as pluginSnippetFolders, NEW_PLUGIN_FILE } from "../plugins/plugins";
@@ -57,7 +57,7 @@ import { PdfPane, PdfPaneApi } from "./PdfPane";
 import { PdfNav } from "./PdfNav";
 import {
   Layout, Tab, TabSpec, activate, activeTab, deserialize, emptyLayout, findSpec, findTab, groupById, keepTab, openPreview, others, place,
-  removeTab, renamePaths, resize, retarget, reveal as revealTab, serialize, split, SavedLayout,
+  forget, remembered, removeTab, renamePaths, resize, retarget, reveal as revealTab, serialize, split, travel, SavedLayout,
 } from "./layout";
 import { dragging } from "./dnd";
 import type { Anchor } from "../preview/viewer";
@@ -339,8 +339,12 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   const views = new Map<string, EditorView>();
   /** Group → file its view shows. */
   const viewDoc = new Map<string, string | null>();
-  /** States of open text files that aren't on screen. */
+  /** States of open text files that aren't on screen (in a tab, or a tab's back/forward history). */
   const docs = new Map<string, EditorState>();
+  /** Where each of those was scrolled to. */
+  const scrolls = new Map<string, StateEffect<unknown>>();
+  /** Where each overview in a tab or a tab's history (by folder) was scrolled to, so coming back lands there again. */
+  const overviewScroll = new Map<string, number>();
   /** Each open file's text as TeXdesk last read or wrote it, to tell changes made elsewhere from its own. */
   const onDisk = new Map<string, string>();
   const pdfAnchors = new Map<string, Anchor>();
@@ -354,6 +358,13 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
 
   const shownIn = (p: string) => [...viewDoc].find(([, d]) => d === p)?.[0] ?? null;
   const hasTab = (p: string) => !!findSpec(layout(), { kind: "text", path: p });
+  /** Is `p` in a tab or a tab's history (so its state is kept)? */
+  const kept = (p: string) => remembered(layout(), { kind: "text", path: p });
+  /** Takes `p`'s state (cursor, undo history, scroll) off view `v`, to show it again later. */
+  function keepState(p: string, v: EditorView) {
+    docs.set(p, v.state);
+    scrolls.set(p, v.scrollSnapshot());
+  }
 
   async function loadState(p: string): Promise<EditorState | null> {
     let text: string;
@@ -404,7 +415,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   function unmountEditor(g: string) {
     const v = views.get(g);
     const d = viewDoc.get(g);
-    if (v && d && hasTab(d)) docs.set(d, v.state);
+    if (v && d && kept(d)) keepState(d, v);
     if (view === v) view = undefined;
     v?.destroy();
     views.delete(g);
@@ -427,7 +438,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     // carries its unsaved edits and undo history), then give each view its file.
     for (const [gid, have] of viewDoc) {
       if (!have || wanted(gid) === have) continue;
-      if (hasTab(have)) docs.set(have, views.get(gid)!.state);
+      if (kept(have)) keepState(have, views.get(gid)!);
       viewDoc.set(gid, null);
       if (!wanted(gid)) views.get(gid)!.setState(EditorState.create());
     }
@@ -441,9 +452,13 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         docs.delete(want);
       }
       views.get(gid)!.setState(state ?? EditorState.create());
+      const scroll = want && scrolls.get(want);
+      if (scroll) views.get(gid)!.dispatch({ effects: scroll });
       viewDoc.set(gid, want);
     }
-    for (const d of [...docs.keys()]) if (!hasTab(d)) docs.delete(d);
+    for (const d of [...docs.keys()]) if (!kept(d)) docs.delete(d);
+    for (const d of [...scrolls.keys()]) if (!kept(d)) scrolls.delete(d);
+    for (const d of [...overviewScroll.keys()]) if (!remembered(layout(), { kind: "overview", path: d })) overviewScroll.delete(d);
     // Settle the current file: keep it if it's still open, else take a visible one.
     const cur = path();
     const g = cur ? shownIn(cur) : null;
@@ -492,6 +507,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         const st = await loadState(p);
         if (!st) return;
         docs.set(p, st);
+        scrolls.delete(p);
       }
     }
     const spec: TabSpec = { kind: "text", path: p };
@@ -1919,6 +1935,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     // Close its tabs (and any tabs for files inside a deleted folder).
     let l = layout();
     for (const g of l.groups) for (const t of g.tabs) if (t.path && (t.path === abs || t.path.startsWith(abs + "/"))) l = removeTab(l, t.id);
+    l = forget(l, (s) => !!s.path && (s.path === abs || s.path.startsWith(abs + "/")));
     for (const [g, d] of viewDoc) if (d && (d === abs || d.startsWith(abs + "/"))) viewDoc.set(g, null);
     setLayout(l);
     await reconcile();
@@ -2808,6 +2825,36 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     await reconcile();
   }
 
+  /**
+   * A file clicked in an overview, shown in the overview's tab like a link in a browser tab
+   * (⌘[ comes back). Folders, the open document's own build (the PDF pane), files open in
+   * another tab and files TeXdesk can't show go where they would from anywhere else.
+   */
+  async function openInTab(tabId: string, p: string) {
+    if (await isDirectory(p)) return openOverview(p, { replace: tabId });
+    const pdf = extname(p) === "pdf";
+    const r = root();
+    const src = pdf && r ? generated().get(relative(r, p)) : undefined;
+    const spec: TabSpec = { kind: pdf ? "pdf" : "text", path: p };
+    if ((src && r && join(r, src) === outputSource()) || (!pdf && BINARY_EXT.has(extname(p))) || findSpec(layout(), spec)) return openPath(p);
+    if (!(await save())) return;
+    setLayout(retarget(layout(), tabId, spec));
+    if (pdf) await reconcile();
+    else await showFile(p);
+  }
+
+  /** ⌘[ / ⌘], ‹ ›, a swipe: back or forward a page in tab `tabId`'s history (default: the front tab's). */
+  async function goHistory(dir: "back" | "forward", tabId = frontTab()?.id) {
+    const next = tabId ? travel(layout(), tabId, dir) : null;
+    if (!next) return;
+    if (!(await save())) return;
+    setLayout(next);
+    const now = frontTab();
+    if (now?.kind === "text") await showFile(now.path!);
+    else await reconcile();
+  }
+
+
   /** Keeps a preview tab open (double-clicked, or worked in: reordered, layout edited). */
   function keepOpen(tabId: string | undefined) {
     if (tabId && findTab(layout(), (t) => t.id === tabId)?.tab.preview) setLayout(keepTab(layout(), tabId));
@@ -2892,12 +2939,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     const folders = dir === r || typed.at(-1) === dir ? typed : [...typed, dir];
     return {
       folders: folders.map((d) => ({ label: basename(d), dir: d })),
-      docs: siblingDocs(overviewInput(), relative(r, src)).map((p) => join(r, p)),
-      current: src,
     };
   });
-  // The bar's order needs file times: load them when the pane shows.
-  createEffect(on(pdfVisible, (v) => { if (v) void refreshTimes(entries()); }, { defer: true }));
 
   /** A Header block's links from folder `rel`: "./x" is relative to it, anything else to the workspace. */
   function headerLinks(rel: string, links: string[]): HeaderLink[] {
@@ -3005,7 +3048,9 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         typeLabel={typeLabel}
         actionsFor={(kind, folder) => newActions(kind, folder)}
         links={(p) => ({ in: linkIndex().get(join(r, p))?.length ?? 0, out: outgoing().get(join(r, p)) ?? 0 })}
-        onOpen={(p) => void openPath(join(r, p))}
+        onOpen={(p, newTab) => void (newTab || !t() ? openPath(join(r, p)) : openInTab(t()!.id, join(r, p)))}
+        onMenu={(e, target) => overviewMenu(e, target, t())}
+        scroll={{ top: overviewScroll.get(t()?.path ?? "") ?? 0, save: (top) => { const p = t()?.path; if (p) overviewScroll.set(p, top); } }}
         onOverview={(p, newTab) => void openOverview(p ? join(r, p) : r, newTab ? {} : { replace: t()?.id })}
         onReorder={(folder, names) => { keepOpen(t()?.id); void saveOrder(folder, names); }}
         onEditing={() => keepOpen(t()?.id)}
@@ -3066,6 +3111,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     { id: "go_overview", label: "Go to overview…", run: goToOverview, when: () => !!root(), needs: OPEN_FOLDER },
     { id: "folder_overview", label: "Overview of this folder", key: "folder_overview", run: folderOverviewCommand, when: () => !!root(), needs: OPEN_FOLDER },
     { id: "go_home", label: "Workspace home page", run: () => openOverview(root()!), when: () => !!root(), needs: OPEN_FOLDER },
+    { id: "go_back", label: "Back", key: "go_back", run: () => goHistory("back"), when: () => !!frontTab()?.back?.length, needs: "somewhere to go back to" },
+    { id: "go_forward", label: "Forward", key: "go_forward", run: () => goHistory("forward"), when: () => !!frontTab()?.forward?.length, needs: "somewhere to go forward to" },
     { id: "new_folder", label: "New folder…", run: newFolder, when: () => !!root(), needs: OPEN_FOLDER },
     { id: "rename_file", label: "Rename file…", run: renameOpenFile, when: () => !!root() && hasFile(), needs: "an open file" },
     { id: "trash_file", label: "Move file to Trash", run: () => { const r = root(), p = path(); if (r && p) void deleteEntry(relative(r, p)); }, when: () => !!root() && hasFile(), needs: "an open file" },
@@ -3208,7 +3255,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         item("build_log", "Show Build Log"), "separator",
         item("fix_spelling", "Fix Previous Misspelling"),
       ] },
-      { label: "Go", items: [item("find_file", "Go to File…"), item("find_in_files", "Search in Files…"), item("go_overview", "Go to Overview…"), item("folder_overview", "Overview of This Folder"), item("go_home", "Workspace Home Page"), item("follow_link", "Follow Link")] },
+      { label: "Go", items: [item("go_back"), item("go_forward"), "separator", item("find_file", "Go to File…"), item("find_in_files", "Search in Files…"), item("go_overview", "Go to Overview…"), item("folder_overview", "Overview of This Folder"), item("go_home", "Workspace Home Page"), item("follow_link", "Follow Link")] },
       { label: "Window", items: [{ native: "minimize" }, "separator", { native: "bringAllToFront" }] },
       { label: "Help", items: [item("show_tour", "Welcome Tour")] },
     ];
@@ -3298,12 +3345,66 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       "separator",
       cmdItem("toggle_pdf", "Hide PDF"),
     ] : [
+      ...historyItems(tab),
       { label: "Open Externally", run: () => host.openExternal(tab.path!).catch(fail) },
-      { label: "Reveal in Finder", run: () => host.openExternal(dirname(tab.path!)).catch(fail) },
+      ...pathItems(tab.path!),
       "separator",
       { label: "Close Tab", hint: shortcut("close_tab"), run: () => closeTab(tab.id) },
     ];
     setCtxMenu({ x, y, items });
+  }
+
+  /** Opens a file or folder (absolute) from a menu: `here` in tab `from` (like a click in an overview), or in a `tab` of its own. */
+  async function openAs(abs: string, how: "here" | "tab", from?: Tab | null) {
+    if (how === "here" && from) return openInTab(from.id, abs);
+    return (await isDirectory(abs)) ? openOverview(abs) : openPath(abs);
+  }
+
+  /** "Open…" items for a file or folder (absolute): in a new tab; with `from`, in that tab too. */
+  function openItems(abs: string, isDir: boolean, from?: Tab | null): ContextItem[] {
+    const what = isDir ? "Overview" : "";
+    return [
+      ...(from ? [{ label: isDir ? "Open Overview" : "Open", run: () => openAs(abs, "here", from) }] : []),
+      { label: `Open ${what ? what + " " : ""}in New Tab`, hint: from ? "⌘-click" : undefined, run: () => openAs(abs, "tab", from) },
+    ];
+  }
+
+  /** Copy Path and Reveal in Finder for a file or folder (absolute). */
+  function pathItems(abs: string): ContextItem[] {
+    const r = root();
+    return [
+      { label: "Copy Path", run: () => host.writeClipboardText(abs).catch(fail) },
+      ...(r && abs.startsWith(r + "/") ? [{ label: "Copy Relative Path", run: () => host.writeClipboardText(relative(r, abs)).catch(fail) }] : []),
+      { label: "Reveal in Finder", run: () => (r && abs.startsWith(r + "/") ? revealInFinder(relative(r, abs)) : host.openExternal(dirname(abs)).catch(fail)) },
+    ];
+  }
+
+  /** Back and Forward in a tab, when it has somewhere to go. */
+  function historyItems(tab: Tab): ContextItem[] {
+    if (!tab.back?.length && !tab.forward?.length) return [];
+    return [
+      { label: "Back", hint: shortcut("go_back"), disabled: !tab.back?.length, run: () => goHistory("back", tab.id) },
+      { label: "Forward", hint: shortcut("go_forward"), disabled: !tab.forward?.length, run: () => goHistory("forward", tab.id) },
+      "separator",
+    ];
+  }
+
+  /** Right-click in an overview: on a file or folder, ways to open it; elsewhere, the tab's history and the folder. */
+  function overviewMenu(e: MouseEvent, target: MenuTarget | null, tab: Tab | null) {
+    const r = root();
+    if (!r || !tab?.path) return;
+    const items: ContextItem[] = target
+      ? [
+          ...openItems(join(r, target.path), target.folder, tab),
+          ...(target.pdf ? ["separator" as const, ...openItems(join(r, target.pdf), false, tab).map((i) => (i === "separator" ? i : { ...i, label: i.label.replace(/^Open/, "Open PDF") }))] : []),
+          "separator",
+          ...pathItems(join(r, target.path)),
+        ]
+      : [
+          ...historyItems(tab),
+          ...pathItems(tab.path),
+        ];
+    setCtxMenu({ x: e.clientX, y: e.clientY, items });
   }
 
   /** Right-click on a tab. */
@@ -3313,17 +3414,15 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     setCtxMenu({
       x, y,
       items: [
+        ...historyItems(tab),
+        ...(tab.preview ? [{ label: "Keep Open", run: () => keepOpen(tab.id) }, "separator" as const] : []),
         { label: "Close", hint: shortcut("close_tab"), run: () => closeTab(tab.id) },
         { label: "Close Others", disabled: !group || group.tabs.length < 2, run: () => closeTabs(others(layout(), tab.id, "others").map((t) => t.id)) },
         { label: "Close to the Right", disabled: !others(layout(), tab.id, "right").length, run: () => closeTabs(others(layout(), tab.id, "right").map((t) => t.id)) },
         "separator",
         { label: "Split Right", hint: shortcut("split_right"), disabled: !group || group.tabs.length < 2, run: () => splitTab(tab.id, "right") },
         { label: "Split Left", disabled: !group || group.tabs.length < 2, run: () => splitTab(tab.id, "left") },
-        ...(tab.path ? [
-          "separator" as const,
-          { label: "Reveal in Finder", run: () => host.openExternal(dirname(tab.path!)).catch(fail) },
-          { label: "Copy Path", run: () => host.writeClipboardText(tab.path!).catch(fail) },
-        ] : []),
+        ...(tab.path ? ["separator" as const, ...pathItems(tab.path)] : []),
       ],
     });
   }
@@ -3394,6 +3493,30 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     if (cmd) await cmd.run();
   }
 
+  // ---- trackpad swipe ----------------------------------------------------------------
+  //
+  // A two-finger swipe sideways over a group goes back (fingers to the right) or forward in
+  // its front tab, like Safari. The webview has no swipe event, so this adds up a gesture's
+  // sideways scrolling, unless something under the pointer can scroll that way itself.
+
+  let swipe = { dx: 0, done: false, timer: 0 };
+  function onSwipe(e: WheelEvent) {
+    clearTimeout(swipe.timer);
+    swipe.timer = window.setTimeout(() => { swipe = { dx: 0, done: false, timer: 0 }; }, 200);
+    if (swipe.done || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+    for (let el = e.target as HTMLElement | null; el; el = el.parentElement) {
+      if (el.scrollWidth > el.clientWidth && (e.deltaX < 0 ? el.scrollLeft > 0 : el.scrollLeft + el.clientWidth < el.scrollWidth)) return;
+    }
+    const g = (e.target as HTMLElement).closest?.("[data-group] .group-body")?.closest("[data-group]")?.getAttribute("data-group");
+    const tab = g ? groupById(layout(), g) : null;
+    const t = tab && activeTab(tab);
+    if (!t) return;
+    swipe.dx += e.deltaX;
+    if (Math.abs(swipe.dx) < 120) return;
+    swipe.done = true;
+    void goHistory(swipe.dx < 0 ? "back" : "forward", t.id);
+  }
+
   // ---- startup & shortcuts --------------------------------------------------------
 
   onMount(async () => {
@@ -3420,6 +3543,9 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       ["follow_link", followLinkCommand, () => isTex() && !!view?.hasFocus],
       ["insert_link", insertLink, () => isTex() && !!view?.hasFocus],
       ["folder_overview", () => runCommand("folder_overview"), () => !!root()],
+      // Always taken, so they never fall through to the editor's indent/outdent.
+      ["go_back", () => goHistory("back"), () => true],
+      ["go_forward", () => goHistory("forward"), () => true],
     ];
     const onKey = (e: KeyboardEvent) => {
       // The palette, Settings, the tour and the diagram editor handle their own keys.
@@ -3439,7 +3565,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     window.addEventListener("keydown", onKey, true);
     const onBlur = () => void save();
     window.addEventListener("blur", onBlur);
-    onCleanup(() => { window.removeEventListener("keydown", onKey, true); window.removeEventListener("blur", onBlur); });
+    window.addEventListener("wheel", onSwipe, { passive: true });
+    onCleanup(() => { window.removeEventListener("keydown", onKey, true); window.removeEventListener("blur", onBlur); window.removeEventListener("wheel", onSwipe); });
 
     await startGlobal();
     try {
@@ -3465,6 +3592,32 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     const i = snippetInfo();
     return `${i.snippets} snippet${i.snippets === 1 ? "" : "s"}${i.keys ? ` · ${i.keys} key${i.keys === 1 ? "" : "s"}` : ""}`;
   };
+
+  /** The bar's build and overview buttons: at the end of the tab bar, over the PDF when it shows. */
+  const barActions = () => (
+    <>
+      <Show when={isTex() && path()}>
+
+        <button
+          class={`tb-btn tb-save-pdf ${savedCopies().length ? "on" : ""}`}
+          title={savedCopies().length
+            ? `Save PDF as… — already saved to ${savedCopies().join(", ")} (updated on every build)`
+            : "Save PDF as… — a copy that updates on every build"}
+          onClick={() => runCommand("save_pdf")}
+        >
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5" /><path d="M2.5 11v2.5h11V11" /></svg>
+        </button>
+        <button class="tb-btn" title={`Show the cursor's line in the PDF (${shortcut("show_in_pdf")})`} onClick={() => runCommand("show_in_pdf")}>
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="5.5" /><circle cx="8" cy="8" r="1.6" fill="currentColor" /></svg>
+        </button>
+      </Show>
+      <Show when={root()}>
+        <button class="tb-btn tb-overview" title={`Overview of this folder (${shortcut("folder_overview")}) — the nearest class, project…`} onClick={() => runCommand("folder_overview")}>
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M2.5 3.5h11M2.5 7h7M2.5 10h7M2.5 13h7" /></svg>
+        </button>
+      </Show>
+    </>
+  );
 
   return (
     <div class="app">
@@ -3495,6 +3648,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
             onDelete={(p) => void deleteEntry(p)}
             onReveal={(p) => void revealInFinder(p)}
             folderItems={folderItems}
+            openItems={(p, isDir) => openItems(join(root()!, p), isDir)}
+            pathItems={(p) => pathItems(join(root()!, p))}
             onOverview={(dir, preview) => void openOverview(dir ? join(root()!, dir) : root()!, { preview })}
             folderClick={config().folderClick}
             onHome={() => void openOverview(root()!)}
@@ -3533,33 +3688,14 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
               </Show>
             )}
             actions={(g) => (
-              // Build actions sit at the end of the tab bar of the group with the current file.
-              <Show when={g === actionGroup()}>
-                <Show when={isTex() && path()}>
-                  <button
-                    class={`tb-btn tb-save-pdf ${savedCopies().length ? "on" : ""}`}
-                    title={savedCopies().length
-                      ? `Save PDF as… — already saved to ${savedCopies().join(", ")} (updated on every build)`
-                      : "Save PDF as… — a copy that updates on every build"}
-                    onClick={() => runCommand("save_pdf")}
-                  >
-                    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5" /><path d="M2.5 11v2.5h11V11" /></svg>
-                  </button>
-                  <button class="tb-btn" title={`Show the cursor's line in the PDF (${shortcut("show_in_pdf")})`} onClick={() => runCommand("show_in_pdf")}>
-                    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="5.5" /><circle cx="8" cy="8" r="1.6" fill="currentColor" /></svg>
-                  </button>
-                </Show>
-                <Show when={root()}>
-                  <button class="tb-btn tb-overview" title={`Overview of this folder (${shortcut("folder_overview")}) — the nearest class, project…`} onClick={() => runCommand("folder_overview")}>
-                    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M2.5 3.5h11M2.5 7h7M2.5 10h7M2.5 13h7" /></svg>
-                  </button>
-                </Show>
-                <button class={`tb-btn tb-pdf ${pdfShown() ? "on" : ""}`} title={`Show/hide the PDF (${shortcut("toggle_pdf")})`} onClick={() => runCommand("toggle_pdf")}>
-                  <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" /><path d="M10 2.5v11" /></svg>
-                  <span>PDF</span>
-                </button>
+              // At the end of the tab bar: of the last group, over the PDF, while that shows (with
+              // the PDF's folders before them); else of the group with the current file.
+              <Show when={pdfVisible() ? g === layout().groups.at(-1)?.id : g === actionGroup()}>
+                <Show when={pdfVisible() && pdfNav()}>{(n) => <PdfNav folders={n().folders} onOverview={(d) => void openOverview(d)} />}</Show>
+                {barActions()}
               </Show>
             )}
+            barOverhang={pdfVisible() ? pdfWidth() : 0}
             empty={() => (
               <Show
                 when={root()}
@@ -3608,9 +3744,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
           onDblClick={() => { setPdfWidth(clampPdf(pdfDefaultWidth())); prefs.set("pdfWidth", pdfWidth()); }}
         />
         <aside class="pdf-side" style={{ width: `${pdfWidth()}px`, display: pdfVisible() ? "" : "none" }}>
-          <Show when={pdfNav()}>
-            {(n) => <PdfNav folders={n().folders} docs={n().docs} current={n().current} onOverview={(d) => void openOverview(d)} onOpen={(p) => void openPath(p)} />}
-          </Show>
+          {/* Room for the last group's tab bar, which goes on over the PDF. */}
+          <div class="pdf-bar-space" />
           <div class="pdf-side-body">
             <PdfPane
               host={host}

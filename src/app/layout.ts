@@ -14,6 +14,9 @@ export interface Tab {
    * VS Code's. Double-clicking it, or working in it, makes it a normal tab.
    */
   preview?: boolean;
+  /** Pages this tab showed before (oldest first) and after (nearest first), like a browser tab's. */
+  back?: TabSpec[];
+  forward?: TabSpec[];
 }
 
 export interface Group {
@@ -81,8 +84,9 @@ export function place(layout: Layout, spec: TabSpec | Tab, groupId: string, inde
   const existing = "id" in spec ? findTab(layout, (t) => t.id === spec.id) : findSpec(layout, spec);
   let tab: Tab = existing?.tab ?? { id: newId("t"), kind: spec.kind, path: spec.path };
   // Moving or dropping a tab somewhere on purpose keeps it.
-  if (tab.preview && existing && "id" in spec) tab = { id: tab.id, kind: tab.kind, path: tab.path };
-  let next = layout;
+  if (tab.preview && existing && "id" in spec) tab = { ...tab, preview: undefined };
+  // A page opened in a tab of its own leaves other tabs' histories (a page is kept in one place).
+  let next = existing ? layout : forget(layout, (s) => same(s, spec));
   let at = index;
   if (existing) {
     const from = existing.group;
@@ -112,6 +116,7 @@ export function openPreview(layout: Layout, spec: TabSpec, groupId: string): { l
   if (!g) return place(layout, spec, layout.activeGroup);
   const old = g.tabs.findIndex((t) => t.preview);
   const tab: Tab = { id: newId("t"), kind: spec.kind, path: spec.path, preview: true };
+  layout = forget(layout, (s) => same(s, spec));
   if (old < 0) {
     const res = place(layout, spec, groupId);
     const tabbed = withGroup(res.layout, groupId, (x) => ({ ...x, tabs: x.tabs.map((t) => (t.id === res.tab.id ? { ...t, preview: true } : t)) }));
@@ -122,22 +127,59 @@ export function openPreview(layout: Layout, spec: TabSpec, groupId: string): { l
   return { layout: { ...withGroup(layout, groupId, (x) => ({ ...x, tabs, active: tab.id })), activeGroup: groupId }, tab };
 }
 
-/** Shows `spec` in tab `tabId`'s place (a new tab there, preview if that one was), like following a link in a browser tab. */
+/** Removes the pages matching `drop` from every tab's back/forward history. */
+export function forget(layout: Layout, drop: (s: TabSpec) => boolean): Layout {
+  const keep = (list?: TabSpec[]) => list?.filter((s) => !drop(s));
+  return {
+    ...layout,
+    groups: layout.groups.map((g) => ({ ...g, tabs: g.tabs.map((t) => (t.back?.some(drop) || t.forward?.some(drop) ? { ...t, back: keep(t.back), forward: keep(t.forward) } : t)) })),
+  };
+}
+
+/** Is `spec` open in a tab, or in a tab's back/forward history? */
+export const remembered = (layout: Layout, spec: TabSpec) =>
+  layout.groups.some((g) => g.tabs.some((t) => same(t, spec) || t.back?.some((s) => same(s, spec)) || t.forward?.some((s) => same(s, spec))));
+
+/** Tab `old` becomes a new tab (new id, so its pane remounts) showing `spec` with history `back`/`forward`. */
+function swap(layout: Layout, old: Tab, groupId: string, spec: TabSpec, back: TabSpec[], forward: TabSpec[]): Layout {
+  const tab: Tab = { id: newId("t"), kind: spec.kind, path: spec.path, ...(old.preview ? { preview: true } : {}), back, forward };
+  return {
+    ...withGroup(layout, groupId, (g) => ({ ...g, tabs: g.tabs.map((t) => (t.id === old.id ? tab : t)), active: tab.id })),
+    activeGroup: groupId,
+  };
+}
+
+/**
+ * Shows `spec` in tab `tabId`'s place, like following a link in a browser tab: what the tab
+ * showed goes on its back history and its forward history is cleared. A page is kept in one
+ * place only, so `spec` leaves any other tab's history.
+ */
 export function retarget(layout: Layout, tabId: string, spec: TabSpec): Layout {
   const hit = findTab(layout, (t) => t.id === tabId);
-  if (!hit) return layout;
-  const tab: Tab = { id: newId("t"), kind: spec.kind, path: spec.path, ...(hit.tab.preview ? { preview: true } : {}) };
-  return {
-    ...withGroup(layout, hit.group.id, (g) => ({ ...g, tabs: g.tabs.map((t) => (t.id === tabId ? tab : t)), active: tab.id })),
-    activeGroup: hit.group.id,
-  };
+  if (!hit || same(hit.tab, spec)) return layout;
+  const was: TabSpec = { kind: hit.tab.kind, path: hit.tab.path };
+  const back = [...(hit.tab.back ?? []).filter((s) => !same(s, spec)), was];
+  return swap(forget(layout, (s) => same(s, spec)), hit.tab, hit.group.id, spec, back, []);
+}
+
+/** Goes back (or forward) a page in tab `tabId`'s history. Null when there's nothing that way. */
+export function travel(layout: Layout, tabId: string, dir: "back" | "forward"): Layout | null {
+  const hit = findTab(layout, (t) => t.id === tabId);
+  const list = hit?.tab[dir];
+  if (!hit || !list?.length) return null;
+  const was: TabSpec = { kind: hit.tab.kind, path: hit.tab.path };
+  const back = hit.tab.back ?? [];
+  const forward = hit.tab.forward ?? [];
+  return dir === "back"
+    ? swap(layout, hit.tab, hit.group.id, back[back.length - 1], back.slice(0, -1), [was, ...forward])
+    : swap(layout, hit.tab, hit.group.id, forward[0], [...back, was], forward.slice(1));
 }
 
 /** Makes a preview tab a normal one (it stays when something else is previewed). */
 export function keepTab(layout: Layout, tabId: string): Layout {
   const hit = findTab(layout, (t) => t.id === tabId);
   if (!hit?.tab.preview) return layout;
-  return withGroup(layout, hit.group.id, (g) => ({ ...g, tabs: g.tabs.map((t) => (t.id === tabId ? { id: t.id, kind: t.kind, path: t.path } : t)) }));
+  return withGroup(layout, hit.group.id, (g) => ({ ...g, tabs: g.tabs.map((t) => (t.id === tabId ? { ...t, preview: undefined } : t)) }));
 }
 
 /** Opens `spec` (or moves its tab) in a new group beside `groupId`, splitting that group's width. */
@@ -192,7 +234,13 @@ export function resize(layout: Layout, sizes: number[]): Layout {
 export function renamePaths(layout: Layout, moved: (p: string) => string | null): Layout {
   return {
     ...layout,
-    groups: layout.groups.map((g) => ({ ...g, tabs: g.tabs.map((t) => (t.path && moved(t.path) ? { ...t, path: moved(t.path) } : t)) })),
+    groups: layout.groups.map((g) => ({
+      ...g,
+      tabs: g.tabs.map((t) => {
+        const at = <T extends TabSpec>(s: T): T => (s.path && moved(s.path) ? { ...s, path: moved(s.path) } : s);
+        return { ...at(t), ...(t.back ? { back: t.back.map(at) } : {}), ...(t.forward ? { forward: t.forward.map(at) } : {}) };
+      }),
+    })),
   };
 }
 

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { EditorView } from "@codemirror/view";
-import { undo } from "@codemirror/commands";
+import { undo, undoDepth } from "@codemirror/commands";
 import { currentCompletions, setSelectedCompletion } from "@codemirror/autocomplete";
 import { App } from "../src/app/App";
 import { formatWorkspace, emptyWorkspace, type WorkspaceFile } from "../src/workspace/model";
@@ -542,9 +542,10 @@ describe("file tree", () => {
     await waitFor(() => editor()?.state.doc.length);
     (await row(root, "hw2.tex")).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
     const items = [...(await waitFor(() => root.querySelector(".ctx-menu"))).querySelectorAll(".ctx-menu-item")].map((b) => b.firstChild!.textContent);
-    expect(items).toEqual(["New File…", "New Folder…", "Rename…", "Move to Trash", "Reveal in Finder"]);
+    expect(items).toEqual(["Open in New Tab", "Rename…", "Move to Trash", "Copy Path", "Copy Relative Path", "Reveal in Finder"]);
     (await row(root, "hw")).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
     await waitFor(() => [...root.querySelectorAll(".ctx-menu-item")].some((b) => b.firstChild!.textContent === "Set Folder Type…"));
+    expect([...root.querySelectorAll(".ctx-menu-item")].slice(0, 3).map((b) => b.firstChild!.textContent)).toEqual(["Open Overview in New Tab", "New File…", "New Folder…"]);
     // A term's menu offers a new class in it.
     (await row(root, "Fa30")).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
     await waitFor(() => [...root.querySelectorAll(".ctx-menu-item")].some((b) => b.firstChild!.textContent === "New Class…"));
@@ -1689,14 +1690,20 @@ describe("menus and toolbar", () => {
     expect(b.host.files.get(hw)).toContain("x");
   });
 
-  it("the tab bar's PDF button shows/hides the PDF", async () => {
-    const { root } = await bootWithCompiler();
-    const pdfButton = [...root.querySelectorAll<HTMLButtonElement>(".tb-btn")].find((b) => b.textContent?.includes("PDF"))!;
+  it("the last tab bar goes on over the PDF while it shows, the bar's buttons at its end; ⌘⇧P shows/hides it", async () => {
+    const { root, key } = await bootWithCompiler();
+    const bars = () => [...root.querySelectorAll<HTMLElement>(".tabbar")];
+    const last = () => bars().at(-1)!;
     expect(pdfPane(root)).not.toBeNull();
-    pdfButton.click();
+    expect(root.querySelector(".tb-pdf, .nav-btn")).toBeNull();
+    expect(root.querySelector(".tb-save-pdf")!.closest(".tabbar")).toBe(last());
+    expect(last().style.marginRight).toMatch(/^-\d+px$/);
+    key("p", { metaKey: true, shiftKey: true });
     await waitFor(() => !pdfPane(root));
-    pdfButton.click();
-    await waitFor(() => pdfPane(root));
+    expect(last().style.marginRight).toBe("");
+    expect(root.querySelector(".tb-save-pdf")!.closest(".tabbar")).toBeTruthy();
+    key("p", { metaKey: true, shiftKey: true });
+    await waitFor(() => pdfPane(root) && last().style.marginRight !== "");
   });
 
   function rightClick(el: Element, x = 5, y = 5) {
@@ -1749,7 +1756,7 @@ describe("menus and toolbar", () => {
     const { root } = await bootWithCompiler();
     rightClick(await waitFor(() => root.querySelector(".tab.text")));
     const labels = (await waitFor(() => menuItems(root).length > 0 && menuItems(root))).map((b) => b.firstChild!.textContent);
-    expect(labels).toEqual(["Close", "Close Others", "Close to the Right", "Split Right", "Split Left", "Reveal in Finder", "Copy Path"]);
+    expect(labels).toEqual(["Close", "Close Others", "Close to the Right", "Split Right", "Split Left", "Copy Path", "Copy Relative Path", "Reveal in Finder"]);
   });
 });
 
@@ -2019,6 +2026,95 @@ describe("folder overview", () => {
     const cls = await waitFor(() => [...b.root.querySelectorAll<HTMLElement>(".overview-pane .ov-sub-row, .overview-pane .ov-group-head")].find((x) => x.textContent?.includes("1-CS101")));
     cls.dispatchEvent(new MouseEvent("click", { bubbles: true, metaKey: true, ctrlKey: true }));
     await waitFor(() => names().join() === "Fa30,1-CS101");
+  });
+
+  it("a file clicked in an overview loads in its tab; ⌘[ / ⌘] go back and forward, keeping cursor and undo", async () => {
+    const b = await open();
+    const names = () => [...b.root.querySelectorAll(".tab .tab-name")].map((x) => x.textContent);
+    const row = (title: string) => [...b.root.querySelectorAll<HTMLElement>(".overview-pane .ov-row")].find((r) => r.querySelector(".ov-title")!.textContent === title)!;
+    expect(names()).toEqual(["hw1.tex", "1-CS101"]);
+    row("Max Flow").click();
+    await waitFor(() => names().join() === "hw1.tex,flows.tex");
+    await waitFor(() => b.editor().state.doc.toString() === "\\section*{Max Flow}");
+    // Typing doesn't add pages; the edit is saved on the way out.
+    b.editor().dispatch({ changes: { from: 0, insert: "% " }, selection: { anchor: 2 }, userEvent: "input.type" });
+    b.key("[", { metaKey: true });
+    await waitFor(() => names().join() === "hw1.tex,1-CS101" && b.root.querySelector(".overview-pane .ov-row"));
+    expect(b.host.files.get(`${C}/notes/flows.tex`)).toBe("% \\section*{Max Flow}");
+    b.key("]", { metaKey: true });
+    await waitFor(() => names().join() === "hw1.tex,flows.tex");
+    const v = await waitFor(() => b.editor().state.doc.toString().startsWith("% ") && b.editor());
+    expect(v.state.selection.main.head).toBe(2);
+    expect(undoDepth(v.state)).toBe(1);
+    b.key("[", { metaKey: true });
+    await waitFor(() => b.root.querySelector(".overview-pane .ov-row"));
+    // ⌘-click and middle-click open a tab of their own.
+    row("Introduction").dispatchEvent(new MouseEvent("click", { bubbles: true, ...modKey }));
+    await waitFor(() => names().join() === "hw1.tex,1-CS101,intro.tex");
+    // intro.tex has nowhere to go back to, and ⌘[ doesn't outdent it either.
+    const intro = await waitFor(() => b.editor().state.doc.toString().startsWith("\\documentclass") && b.editor());
+    intro.dispatch({ changes: { from: 0, insert: "  " } });
+    intro.focus();
+    intro.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "[", bubbles: true, cancelable: true, ...modKey }));
+    await settle(30);
+    expect(names()).toEqual(["hw1.tex", "1-CS101", "intro.tex"]);
+    expect(intro.state.doc.toString().startsWith("  \\documentclass")).toBe(true);
+    row("hw2.tex").dispatchEvent(new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    await waitFor(() => names().length === 4 && names().includes("hw2.tex") && names().includes("1-CS101"));
+  });
+
+  it("right-clicking a file or folder in an overview offers opening it here or in a new tab", async () => {
+    const b = await open();
+    const names = () => [...b.root.querySelectorAll(".tab .tab-name")].map((x) => x.textContent);
+    const row = (title: string) => [...b.root.querySelectorAll<HTMLElement>(".overview-pane .ov-row")].find((r) => r.querySelector(".ov-title")!.textContent === title)!;
+    const items = () => [...b.root.querySelectorAll<HTMLElement>(".ctx-menu-item")];
+    const labels = () => items().map((x) => x.firstChild!.textContent);
+    const pick = (label: string) => items().find((x) => x.firstChild!.textContent === label)!.click();
+    const right = (el: Element) => el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+    right(row("hw1.tex"));
+    await waitFor(() => items().length);
+    expect(labels()).toEqual(["Open", "Open in New Tab", "Copy Path", "Copy Relative Path", "Reveal in Finder"]);
+    b.key("Escape");
+    right(row("Max Flow"));
+    await waitFor(() => items().length);
+    pick("Open in New Tab");
+    await waitFor(() => names().join() === "hw1.tex,1-CS101,flows.tex");
+    right(row("Introduction"));
+    await waitFor(() => labels()[0] === "Open");
+    pick("Open");
+    await waitFor(() => names().join() === "hw1.tex,intro.tex,flows.tex");
+    // Back in the overview, its background menu goes forward again.
+    b.key("[", { metaKey: true });
+    await waitFor(() => names().join() === "hw1.tex,1-CS101,flows.tex" && b.root.querySelector(".overview-pane .ov-row"));
+    right(b.root.querySelector(".overview-pane .ov-toolbar")!);
+    await waitFor(() => labels()[0] === "Back");
+    expect(items()[0].hasAttribute("disabled") || items()[0].classList.contains("disabled")).toBe(true);
+    pick("Forward");
+    await waitFor(() => names().join() === "hw1.tex,intro.tex,flows.tex");
+  });
+
+  it("a sideways swipe goes back and forward; an overview keeps its scroll", async () => {
+    const b = await open();
+    const names = () => [...b.root.querySelectorAll(".tab .tab-name")].map((x) => x.textContent);
+    const row = (title: string) => [...b.root.querySelectorAll<HTMLElement>(".overview-pane .ov-row")].find((r) => r.querySelector(".ov-title")!.textContent === title)!;
+    const list = () => b.root.querySelector<HTMLElement>(".overview-pane .ov-scroll")!;
+    list().scrollTop = 40;
+    list().dispatchEvent(new Event("scroll"));
+    row("Max Flow").click();
+    await waitFor(() => names().join() === "hw1.tex,flows.tex");
+    await waitFor(() => b.editor().state.doc.toString() === "\\section*{Max Flow}");
+    b.key("[", { metaKey: true });
+    await waitFor(() => names().join() === "hw1.tex,1-CS101" && b.root.querySelector(".overview-pane .ov-row"));
+    await waitFor(() => list().scrollTop === 40);
+    b.key("]", { metaKey: true });
+    await waitFor(() => names().join() === "hw1.tex,flows.tex");
+    // Fingers to the right over the editor: back.
+    const body = () => b.root.querySelectorAll<HTMLElement>(".group-body")[0];
+    for (let i = 0; i < 4; i++) body().querySelector(".cm-content")!.dispatchEvent(new WheelEvent("wheel", { deltaX: -40, bubbles: true }));
+    await waitFor(() => names().join() === "hw1.tex,1-CS101");
+    await settle(250);
+    for (let i = 0; i < 4; i++) list().dispatchEvent(new WheelEvent("wheel", { deltaX: 40, bubbles: true }));
+    await waitFor(() => names().join() === "hw1.tex,flows.tex");
   });
 
   it("the TeX / PDF / Other toggles hide kinds of files, remembered for the folder", async () => {
@@ -2417,7 +2513,7 @@ describe("starters, folder types and layouts", () => {
     };
     const b = await boot({ ...files, [`${W}/.texdesk/workspace.json`]: JSON.stringify(ws), [`${W}/Wi31/CS201/hw/a.tex`]: "" }, `${W}/Fa30/1-CS101/hw/hw1.tex`);
     await waitFor(() => b.editor()?.state.doc.length);
-    await menu(b, "1-CS101", "Open Overview");
+    await menu(b, "1-CS101", "Open Overview in New Tab");
     await waitFor(() => b.root.querySelector(".ov-h1")?.textContent === "1-CS101");
     (await waitFor(() => b.root.querySelector<HTMLElement>(".ov-edit-btn"))).click();
     expect(b.root.querySelector(".ov-editor-note")!.textContent).toContain("this folder and 1 other");
@@ -2448,14 +2544,14 @@ describe("starters, folder types and layouts", () => {
     };
     const b = await boot({ ...files, [`${W}/.texdesk/workspace.json`]: JSON.stringify(ws), [`${W}/Wi31/x.tex`]: "" }, `${W}/Fa30/1-CS101/hw/hw1.tex`);
     await waitFor(() => b.editor()?.state.doc.length);
-    await menu(b, "1-CS101", "Open Overview");
+    await menu(b, "1-CS101", "Open Overview in New Tab");
     const links = () => [...b.root.querySelectorAll<HTMLButtonElement>(".ov-hlink")];
     await waitFor(() => links().length === 3);
     expect(links().map((l) => [l.textContent, l.disabled])).toEqual([["hw1", false], ["Wi31", false], ["gone", true]]);
     links()[1].click();
     await waitFor(() => [...b.root.querySelectorAll(".ov-h1")].some((h) => h.textContent === "Wi31"));
     // Adding one in the editor.
-    await menu(b, "1-CS101", "Open Overview");
+    await menu(b, "1-CS101", "Open Overview in New Tab");
     const page = await waitFor(() => [...b.root.querySelectorAll<HTMLElement>(".overview-pane")].find((x) => x.style.display !== "none" && x.querySelector(".ov-h1")?.textContent === "1-CS101"));
     (await waitFor(() => page.querySelector<HTMLElement>(".ov-edit-btn"))).click();
     (await waitFor(() => page.querySelector<HTMLElement>(".ov-editor-block"))).click();
@@ -2481,7 +2577,7 @@ describe("starters, folder types and layouts", () => {
     };
     const b = await boot({ ...files, [`${W}/.texdesk/workspace.json`]: JSON.stringify(ws), [`${W}/Wi31/CS201/hw/a.tex`]: "" }, `${W}/Fa30/1-CS101/hw/hw1.tex`);
     await waitFor(() => b.editor()?.state.doc.length);
-    await menu(b, "1-CS101", "Open Overview");
+    await menu(b, "1-CS101", "Open Overview in New Tab");
     (await waitFor(() => b.root.querySelector<HTMLElement>(".ov-edit-btn"))).click();
     [...b.root.querySelectorAll<HTMLElement>(".ov-editor-note .set-link")].find((x) => x.textContent === "Customize for this folder only")!.click();
     await waitFor(() => wsOf(b).folders["Fa30/1-CS101"].overview);
@@ -2505,7 +2601,7 @@ describe("starters, folder types and layouts", () => {
     };
     const b = await boot({ ...files, [`${W}/.texdesk/workspace.json`]: JSON.stringify(ws) }, `${W}/Fa30/1-CS101/hw/hw1.tex`);
     await waitFor(() => b.editor()?.state.doc.length);
-    await menu(b, "Fa30", "Open Overview");
+    await menu(b, "Fa30", "Open Overview in New Tab");
     await waitFor(() => b.root.querySelector(".ov-h1")?.textContent === "Fa30");
     const row = await waitFor(() => b.root.querySelector<HTMLElement>(".ov-sub-row"));
     expect(row.textContent).toContain("1-CS101");
@@ -2913,33 +3009,13 @@ describe("PDF pane bar", () => {
   const C = `${WS}/Fa30/1-CS101`;
   const doc = (body: string) => `\\documentclass{article}\n\\begin{document}\n${body}\n\\end{document}`;
   const files = { ...coursework, [`${C}/hw/hw2.tex`]: doc("two"), [`${C}/hw/hw3.tex`]: doc("three"), [`${C}/hw/preamble.tex`]: "\\usepackage{amsmath}" };
-  const bar = (root: HTMLElement) => pdfPane(root)?.querySelector<HTMLElement>(".pdf-nav") ?? null;
+  const bar = (root: HTMLElement) => [...root.querySelectorAll<HTMLElement>(".tabbar")].at(-1) ?? null;
   const crumbs = (root: HTMLElement) => [...bar(root)!.querySelectorAll(".pdf-nav-crumb")].map((x) => x.textContent);
-  const docs = (root: HTMLElement) => [...bar(root)!.querySelectorAll("option")].map((x) => x.textContent);
-  const button = (root: HTMLElement, cls: string) => bar(root)!.querySelector<HTMLButtonElement>(cls)!;
-
-  it("shows the document's folders and steps through the documents next to it, in the folder's order", async () => {
-    // Oldest first: hw3, hw1, hw2 (not by name).
-    const b = await boot(files, `${C}/hw/hw1.tex`, null, (h) => {
-      h.times[`${C}/hw/hw3.tex`] = { created: 1, modified: 1 };
-      h.times[`${C}/hw/hw1.tex`] = { created: 2, modified: 2 };
-      h.times[`${C}/hw/hw2.tex`] = { created: 3, modified: 3 };
-    });
-    await waitFor(() => bar(b.root) && docs(b.root).length === 3);
+  it("shows the document's folders, each opening its overview", async () => {
+    const b = await boot(files, `${C}/hw/hw1.tex`);
+    await waitFor(() => bar(b.root)?.querySelector(".pdf-nav-crumb"));
     expect(crumbs(b.root)).toEqual(["Fa30", "1-CS101", "hw"]);
-    // Documents only: not preamble.tex (no \documentclass), the PDF or the zip.
-    expect(docs(b.root)).toEqual(["hw3", "hw1", "hw2"]);
-
-    button(b.root, ".pdf-nav-next").click();
-    await waitFor(() => b.editor().state.doc.toString().includes("two"));
-    await waitFor(() => button(b.root, ".pdf-nav-next").disabled);
-
-    const select = bar(b.root)!.querySelector<HTMLSelectElement>("select")!;
-    select.value = `${C}/hw/hw3.tex`;
-    select.dispatchEvent(new Event("change"));
-    await waitFor(() => b.editor().state.doc.toString().includes("three"));
-    await waitFor(() => button(b.root, ".pdf-nav-prev").disabled);
-
+    expect(bar(b.root)!.querySelector("select")).toBeNull();
     [...bar(b.root)!.querySelectorAll<HTMLElement>(".pdf-nav-crumb")].find((x) => x.textContent === "1-CS101")!.click();
     await waitFor(() => b.root.querySelector(".overview-pane .ov-h1")?.textContent === "1-CS101");
   });

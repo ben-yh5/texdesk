@@ -35,6 +35,8 @@ export interface WorkbenchProps {
   /** Buttons at the start / end of a group's tab bar. */
   leading?(group: string): JSX.Element;
   actions?(group: string): JSX.Element;
+  /** How far (px) the last group's tab bar goes on past its right edge: over the PDF pane beside it. */
+  barOverhang?: number;
   /** Shown in a group with no tabs. */
   empty(): JSX.Element;
 }
@@ -127,13 +129,17 @@ export function Workbench(props: WorkbenchProps) {
         {(g) => (
           <section
             class={`group ${props.layout.activeGroup === p.id ? "focused" : ""}`}
+            data-group={p.id}
             // Grow by the group's share of the total: flex-grow values adding up to less
             // than 1 leave part of the row empty (a lone group of size 0.5 fills half).
             style={{ flex: `${(g().size / totalSize()) * props.layout.groups.length} 1 0` }}
             onMouseDown={() => props.onFocusGroup(p.id)}
             onFocusIn={() => props.onFocusGroup(p.id)}
           >
-            <div class="tabbar" onDragOver={(e) => overBar(e)} onDrop={drop}>
+            <div
+              class="tabbar" onDragOver={(e) => overBar(e)} onDrop={drop}
+              style={{ "margin-right": p.id === groupIds().at(-1) && props.barOverhang ? `${-props.barOverhang}px` : undefined }}
+            >
               <Show when={props.leading}><div class="tabbar-actions leading">{props.leading!(p.id)}</div></Show>
               <div class="tabs" ref={barEl}>
               <For each={tabIds()}>
