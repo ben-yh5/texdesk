@@ -1689,17 +1689,20 @@ describe("menus and toolbar", () => {
     expect(b.host.files.get(hw)).toContain("x");
   });
 
-  it("the bar's buttons sit over the PDF while it shows, else at the end of the tab bar; ⌘⇧P shows/hides it", async () => {
+  it("the last tab bar goes on over the PDF while it shows, the bar's buttons at its end; ⌘⇧P shows/hides it", async () => {
     const { root, key } = await bootWithCompiler();
-    const where = () => root.querySelector(".tb-save-pdf")?.closest(".pdf-nav, .tabbar")?.className;
+    const bars = () => [...root.querySelectorAll<HTMLElement>(".tabbar")];
+    const last = () => bars().at(-1)!;
     expect(pdfPane(root)).not.toBeNull();
-    expect(root.querySelector(".tb-pdf")).toBeNull();
-    expect(where()).toBe("pdf-nav");
+    expect(root.querySelector(".tb-pdf, .nav-btn")).toBeNull();
+    expect(root.querySelector(".tb-save-pdf")!.closest(".tabbar")).toBe(last());
+    expect(last().style.marginRight).toMatch(/^-\d+px$/);
     key("p", { metaKey: true, shiftKey: true });
     await waitFor(() => !pdfPane(root));
-    expect(where()).toBe("tabbar");
+    expect(last().style.marginRight).toBe("");
+    expect(root.querySelector(".tb-save-pdf")!.closest(".tabbar")).toBeTruthy();
     key("p", { metaKey: true, shiftKey: true });
-    await waitFor(() => pdfPane(root) && where() === "pdf-nav");
+    await waitFor(() => pdfPane(root) && last().style.marginRight !== "");
   });
 
   function rightClick(el: Element, x = 5, y = 5) {
@@ -2059,23 +2062,20 @@ describe("folder overview", () => {
     await waitFor(() => names().length === 4 && names().includes("hw2.tex") && names().includes("1-CS101"));
   });
 
-  it("‹ › before the first tab and a sideways swipe go back and forward; an overview keeps its scroll", async () => {
+  it("a sideways swipe goes back and forward; an overview keeps its scroll", async () => {
     const b = await open();
     const names = () => [...b.root.querySelectorAll(".tab .tab-name")].map((x) => x.textContent);
     const row = (title: string) => [...b.root.querySelectorAll<HTMLElement>(".overview-pane .ov-row")].find((r) => r.querySelector(".ov-title")!.textContent === title)!;
-    const nav = (which: "Back" | "Forward") => b.root.querySelector<HTMLButtonElement>(`.tabbar-actions.leading .nav-btn[title^="${which}"]`)!;
     const list = () => b.root.querySelector<HTMLElement>(".overview-pane .ov-scroll")!;
-    expect(nav("Back").disabled).toBe(true);
     list().scrollTop = 40;
     list().dispatchEvent(new Event("scroll"));
     row("Max Flow").click();
     await waitFor(() => names().join() === "hw1.tex,flows.tex");
     await waitFor(() => b.editor().state.doc.toString() === "\\section*{Max Flow}");
-    expect(nav("Forward").disabled).toBe(true);
-    nav("Back").click();
+    b.key("[", { metaKey: true });
     await waitFor(() => names().join() === "hw1.tex,1-CS101" && b.root.querySelector(".overview-pane .ov-row"));
     await waitFor(() => list().scrollTop === 40);
-    nav("Forward").click();
+    b.key("]", { metaKey: true });
     await waitFor(() => names().join() === "hw1.tex,flows.tex");
     // Fingers to the right over the editor: back.
     const body = () => b.root.querySelectorAll<HTMLElement>(".group-body")[0];
@@ -2978,7 +2978,7 @@ describe("PDF pane bar", () => {
   const C = `${WS}/Fa30/1-CS101`;
   const doc = (body: string) => `\\documentclass{article}\n\\begin{document}\n${body}\n\\end{document}`;
   const files = { ...coursework, [`${C}/hw/hw2.tex`]: doc("two"), [`${C}/hw/hw3.tex`]: doc("three"), [`${C}/hw/preamble.tex`]: "\\usepackage{amsmath}" };
-  const bar = (root: HTMLElement) => pdfPane(root)?.querySelector<HTMLElement>(".pdf-nav") ?? null;
+  const bar = (root: HTMLElement) => [...root.querySelectorAll<HTMLElement>(".tabbar")].at(-1) ?? null;
   const crumbs = (root: HTMLElement) => [...bar(root)!.querySelectorAll(".pdf-nav-crumb")].map((x) => x.textContent);
   it("shows the document's folders, each opening its overview", async () => {
     const b = await boot(files, `${C}/hw/hw1.tex`);

@@ -401,7 +401,8 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 /* Sits over the sidebar's right border; only the hover highlight shows. */
 .sidebar-splitter, .pdf-splitter { flex: none; width: 6px; margin: 0 -3px; z-index: 3; cursor: col-resize; position: relative; }
 .sidebar-splitter:hover, body.resizing .sidebar-splitter:active, .pdf-splitter:hover, body.resizing .pdf-splitter:active { background: var(--td-accent); background-clip: content-box; border-left: 2px solid transparent; border-right: 2px solid transparent; }
-.tabbar { flex: none; display: flex; height: 34px; background: var(--td-bar); border-bottom: 1px solid var(--td-border); overflow: hidden; }
+.pdf-splitter { margin-top: 34px; } /* the tab bar goes on over it */
+.tabbar { flex: none; display: flex; height: 34px; background: var(--td-bar); border-bottom: 1px solid var(--td-border); overflow: hidden; position: relative; z-index: 4; }
 .tabbar-rest { flex: 1; min-width: 24px; }
 .tabs { display: flex; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
@@ -432,9 +433,8 @@ body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none
 .pdf-side { flex: none; position: relative; display: flex; flex-direction: column; min-width: 0; }
 .pdf-side-body { position: relative; flex: 1; min-height: 0; border-left: 1px solid var(--td-border); }
 /* Same height as the tab bar beside it. */
-.pdf-nav { flex: none; display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 0 0 10px; box-sizing: border-box; background: var(--td-bar); border-bottom: 1px solid var(--td-border); font-size: 12px; color: var(--td-muted); }
-.pdf-nav > .tabbar-actions { margin-left: auto; }
-.pdf-nav-crumbs { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: right; }
+.pdf-bar-space { flex: none; height: 34px; }
+.pdf-nav-crumbs { max-width: 320px; margin-right: 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; color: var(--td-muted); }
 .pdf-nav-crumb { background: none; border: none; padding: 0; font: inherit; color: inherit; cursor: pointer; }
 .pdf-nav-crumb:hover { color: var(--td-accent); text-decoration: underline; }
 .pdf-nav-sep { margin: 0 5px; opacity: 0.6; }
@@ -550,10 +550,6 @@ body.resizing .pdf-pane, body.resizing .editor { pointer-events: none; }
 .ov-dragging { opacity: 0.4; }
 .ov-empty { color: var(--td-muted); padding: 4px 6px; font-style: italic; }
 .ov-hint { color: var(--td-muted); font-size: 11px; margin-top: 18px; }
-.nav-btns { display: inline-flex; gap: 2px; }
-.nav-btn { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 20px; padding: 0; background: none; border: none; border-radius: 4px; color: var(--td-muted); cursor: pointer; }
-.nav-btn:hover:not(:disabled) { color: var(--td-fg); background: var(--td-active-line); }
-.nav-btn:disabled { opacity: 0.35; cursor: default; }
 .status-crumb { background: none; border: none; padding: 0; font: inherit; color: inherit; cursor: pointer; }
 .status-crumb:hover { color: var(--td-accent); text-decoration: underline; }
 

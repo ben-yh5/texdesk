@@ -34,7 +34,6 @@ import { SearchFile, SearchHit, searchFile, searchFiles } from "../workspace/sea
 import { applyGlobalMigration, applyMigration, describePlan, hasLegacySetup, mergeSettings, planGlobalMigration, planMigration } from "../workspace/migrate";
 import { PaletteView, PickItem, createPalette } from "./Palette";
 import { ALL_KINDS, HeaderLink, Kinds, NewAction, Overview, ResolvedBlock } from "./Overview";
-import { NavButtons } from "./NavButtons";
 import { OverviewInput, buildOverview, filesView, findGroup, folderMetas as metasOf, mergeOrder, subfolderRows } from "../workspace/overview";
 import { DebugPanel } from "./DebugPanel";
 import { SettingsScope, SettingsView } from "./Settings";
@@ -2854,7 +2853,6 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     if (now?.kind === "text") await showFile(now.path!);
     else await reconcile();
   }
-  const canGo = (tabId: string | undefined, dir: "back" | "forward") => !!(tabId && findTab(layout(), (t) => t.id === tabId)?.tab[dir]?.length);
 
 
   /** Keeps a preview tab open (double-clicked, or worked in: reordered, layout edited). */
@@ -3628,20 +3626,21 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
             onTabMenu={onTabMenu}
             onResize={(sizes) => setLayout(resize(layout(), sizes))}
             leading={(g) => (
-              // Top left, before the first tab: the sidebar switch, then back/forward in the front tab.
-              <Show when={g === layout().groups[0]?.id}>
-                <Show when={root()}>
-                  <button class={`tb-btn ${sidebar() ? "on" : ""}`} title={`Show/hide sidebar (${shortcut("toggle_sidebar")})`} onClick={() => runCommand("toggle_sidebar")}>
-                    <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" /><path d="M6 2.5v11" /></svg>
-                  </button>
-                </Show>
-                <NavButtons can={(dir) => canGo(frontTab()?.id, dir)} go={(dir) => void goHistory(dir)} />
+              <Show when={root() && g === layout().groups[0]?.id}>
+                <button class={`tb-btn ${sidebar() ? "on" : ""}`} title={`Show/hide sidebar (${shortcut("toggle_sidebar")})`} onClick={() => runCommand("toggle_sidebar")}>
+                  <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" /><path d="M6 2.5v11" /></svg>
+                </button>
               </Show>
             )}
             actions={(g) => (
-              // With the PDF hidden, the actions sit at the end of the tab bar of the group with the current file.
-              <Show when={g === actionGroup() && !pdfVisible()}>{barActions()}</Show>
+              // At the end of the tab bar: of the last group, over the PDF, while that shows (with
+              // the PDF's folders before them); else of the group with the current file.
+              <Show when={pdfVisible() ? g === layout().groups.at(-1)?.id : g === actionGroup()}>
+                <Show when={pdfVisible() && pdfNav()}>{(n) => <PdfNav folders={n().folders} onOverview={(d) => void openOverview(d)} />}</Show>
+                {barActions()}
+              </Show>
             )}
+            barOverhang={pdfVisible() ? pdfWidth() : 0}
             empty={() => (
               <Show
                 when={root()}
@@ -3690,11 +3689,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
           onDblClick={() => { setPdfWidth(clampPdf(pdfDefaultWidth())); prefs.set("pdfWidth", pdfWidth()); }}
         />
         <aside class="pdf-side" style={{ width: `${pdfWidth()}px`, display: pdfVisible() ? "" : "none" }}>
-          {/* The tab bar goes on over the PDF: its folders, then the bar's buttons. */}
-          <div class="pdf-nav">
-            <Show when={pdfNav()}>{(n) => <PdfNav folders={n().folders} onOverview={(d) => void openOverview(d)} />}</Show>
-            <div class="tabbar-actions">{barActions()}</div>
-          </div>
+          {/* Room for the last group's tab bar, which goes on over the PDF. */}
+          <div class="pdf-bar-space" />
           <div class="pdf-side-body">
             <PdfPane
               host={host}
