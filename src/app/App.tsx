@@ -3354,28 +3354,18 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     setCtxMenu({ x, y, items });
   }
 
-  /**
-   * Opens a file or folder (absolute) from a menu: `here` in tab `from` (like a click in an
-   * overview), in a `tab` of its own, or in a new group to the `side` of `from`'s (else the text's).
-   */
-  async function openAs(abs: string, how: "here" | "tab" | "side", from?: Tab | null) {
-    const dir = await isDirectory(abs);
+  /** Opens a file or folder (absolute) from a menu: `here` in tab `from` (like a click in an overview), or in a `tab` of its own. */
+  async function openAs(abs: string, how: "here" | "tab", from?: Tab | null) {
     if (how === "here" && from) return openInTab(from.id, abs);
-    if (how !== "side") return dir ? openOverview(abs) : openPath(abs);
-    const where: Where = { group: (from && findTab(layout(), (t) => t.id === from.id)?.group.id) || textGroup(), side: "right" };
-    if (dir) return openOverview(abs, { where });
-    if (extname(abs) === "pdf") return openPdf(abs, where);
-    if (BINARY_EXT.has(extname(abs))) return openPath(abs);
-    await showFile(abs, undefined, where);
+    return (await isDirectory(abs)) ? openOverview(abs) : openPath(abs);
   }
 
-  /** "Open…" items for a file or folder (absolute): in a new tab or beside; with `from`, in that tab too. */
+  /** "Open…" items for a file or folder (absolute): in a new tab; with `from`, in that tab too. */
   function openItems(abs: string, isDir: boolean, from?: Tab | null): ContextItem[] {
     const what = isDir ? "Overview" : "";
     return [
       ...(from ? [{ label: isDir ? "Open Overview" : "Open", run: () => openAs(abs, "here", from) }] : []),
       { label: `Open ${what ? what + " " : ""}in New Tab`, hint: from ? "⌘-click" : undefined, run: () => openAs(abs, "tab", from) },
-      { label: `Open ${what ? what + " " : ""}to the Side`, run: () => openAs(abs, "side", from) },
     ];
   }
 

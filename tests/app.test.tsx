@@ -542,12 +542,10 @@ describe("file tree", () => {
     await waitFor(() => editor()?.state.doc.length);
     (await row(root, "hw2.tex")).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
     const items = [...(await waitFor(() => root.querySelector(".ctx-menu"))).querySelectorAll(".ctx-menu-item")].map((b) => b.firstChild!.textContent);
-    expect(items).toEqual(["Open in New Tab", "Open to the Side", "Rename…", "Move to Trash", "Copy Path", "Copy Relative Path", "Reveal in Finder"]);
-    [...root.querySelectorAll<HTMLElement>(".ctx-menu-item")].find((x) => x.firstChild!.textContent === "Open to the Side")!.click();
-    await waitFor(() => root.querySelectorAll(".group").length === 2 && root.querySelectorAll(".group")[1].querySelector(".tab.active")?.textContent?.includes("hw2.tex"));
+    expect(items).toEqual(["Open in New Tab", "Rename…", "Move to Trash", "Copy Path", "Copy Relative Path", "Reveal in Finder"]);
     (await row(root, "hw")).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
     await waitFor(() => [...root.querySelectorAll(".ctx-menu-item")].some((b) => b.firstChild!.textContent === "Set Folder Type…"));
-    expect([...root.querySelectorAll(".ctx-menu-item")].slice(0, 4).map((b) => b.firstChild!.textContent)).toEqual(["Open Overview in New Tab", "Open Overview to the Side", "New File…", "New Folder…"]);
+    expect([...root.querySelectorAll(".ctx-menu-item")].slice(0, 3).map((b) => b.firstChild!.textContent)).toEqual(["Open Overview in New Tab", "New File…", "New Folder…"]);
     // A term's menu offers a new class in it.
     (await row(root, "Fa30")).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
     await waitFor(() => [...root.querySelectorAll(".ctx-menu-item")].some((b) => b.firstChild!.textContent === "New Class…"));
@@ -2065,7 +2063,7 @@ describe("folder overview", () => {
     await waitFor(() => names().length === 4 && names().includes("hw2.tex") && names().includes("1-CS101"));
   });
 
-  it("right-clicking a file or folder in an overview offers opening it here, in a new tab or to the side", async () => {
+  it("right-clicking a file or folder in an overview offers opening it here or in a new tab", async () => {
     const b = await open();
     const names = () => [...b.root.querySelectorAll(".tab .tab-name")].map((x) => x.textContent);
     const row = (title: string) => [...b.root.querySelectorAll<HTMLElement>(".overview-pane .ov-row")].find((r) => r.querySelector(".ov-title")!.textContent === title)!;
@@ -2075,7 +2073,7 @@ describe("folder overview", () => {
     const right = (el: Element) => el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
     right(row("hw1.tex"));
     await waitFor(() => items().length);
-    expect(labels()).toEqual(["Open", "Open in New Tab", "Open to the Side", "Copy Path", "Copy Relative Path", "Reveal in Finder"]);
+    expect(labels()).toEqual(["Open", "Open in New Tab", "Copy Path", "Copy Relative Path", "Reveal in Finder"]);
     b.key("Escape");
     right(row("Max Flow"));
     await waitFor(() => items().length);
