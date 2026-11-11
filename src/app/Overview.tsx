@@ -61,6 +61,8 @@ export interface OverviewProps {
   visible: () => boolean;
   /** Opens a file (relative path) in this tab; `newTab` (⌘-click, middle-click): in a tab of its own. */
   onOpen(path: string, newTab?: boolean): void;
+  /** Right-click on a file or folder (relative paths; `pdf`: a document's PDF), or (null) elsewhere in the overview. */
+  onMenu?(e: MouseEvent, target: MenuTarget | null): void;
   /** Where the list was scrolled to last time (restored when it shows), and keeping it. */
   scroll?: { top: number; save: (top: number) => void };
   /** Goes to a folder's overview (relative path), in this tab; `newTab` (⌘-click): in a tab of its own. */
@@ -87,6 +89,8 @@ export interface OverviewProps {
 
 /** ⌘-click (Ctrl-click off the Mac): open in a new tab. */
 const mod = (e: MouseEvent | KeyboardEvent) => e.metaKey || e.ctrlKey;
+export type MenuTarget = { path: string; folder: boolean; pdf?: string };
+
 /** Middle-click opens in a new tab too. */
 const middle = (open: () => void) => (e: MouseEvent) => { if (e.button === 1) { e.preventDefault(); open(); } };
 
@@ -111,6 +115,13 @@ const BLOCK_HELP: Record<Block["type"], string> = {
 };
 
 export function Overview(props: OverviewProps) {
+  const menu = (target: MenuTarget | null) => (e: MouseEvent) => {
+    // Text fields keep the system menu (cut, copy, paste).
+    if (!props.onMenu || (e.target as HTMLElement).closest("input, textarea")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    props.onMenu(e, target);
+  };
   const [query, setQuery] = createSignal("");
   const [editing, setEditing] = createSignal(false);
   const [selected, setSelected] = createSignal<number | null>(null);
@@ -225,7 +236,7 @@ export function Overview(props: OverviewProps) {
       return (
         <div
           class={`ov-row ov-${r.item.type} ${insertClass(r.group, r.item.name)}`} tabindex={0} role="button"
-          onClick={(e) => props.onOpen(r.item.path, mod(e))} onAuxClick={middle(() => props.onOpen(r.item.path, true))} onKeyDown={(e) => onKey(e, r.group, r.item)}
+          onClick={(e) => props.onOpen(r.item.path, mod(e))} onAuxClick={middle(() => props.onOpen(r.item.path, true))} onContextMenu={menu({ path: r.item.path, folder: false, pdf: r.item.pdf ?? undefined })} onKeyDown={(e) => onKey(e, r.group, r.item)}
           title={r.item.path} {...dragProps(r.group, r.item)} {...dropProps(r.group, r.item)}
         >
           <span class="ov-title">{(show().title && r.item.title) || r.item.name}</span>
@@ -237,7 +248,7 @@ export function Overview(props: OverviewProps) {
           <Show when={show().date}><span class="ov-when">{formatWhen(r.item.modified)}</span></Show>
           <Show when={show().pdf && r.item.pdf}>
             <button class="ov-pdf" title={r.item.pdf!} onClick={(e) => { e.stopPropagation(); props.onOpen(r.item.pdf!, mod(e)); }}
-              onAuxClick={(e) => { e.stopPropagation(); middle(() => props.onOpen(r.item.pdf!, true))(e); }}>PDF</button>
+              onAuxClick={(e) => { e.stopPropagation(); middle(() => props.onOpen(r.item.pdf!, true))(e); }} onContextMenu={menu({ path: r.item.pdf!, folder: false })}>PDF</button>
           </Show>
         </div>
       );
@@ -252,6 +263,7 @@ export function Overview(props: OverviewProps) {
             title={link() ? `Open the ${props.typeLabel(g.group.kind!)} overview` : undefined}
             onClick={(e) => { if (link()) props.onOverview(g.group.path, mod(e)); }}
             onAuxClick={middle(() => { if (link()) props.onOverview(g.group.path, true); })}
+            onContextMenu={menu({ path: g.group.path, folder: true })}
             onKeyDown={(e) => {
               if (link() && e.key === "Enter") { e.preventDefault(); props.onOverview(g.group.path, mod(e)); return; }
               onKey(e, g.parent, g.group);
@@ -305,10 +317,10 @@ export function Overview(props: OverviewProps) {
             return (
               <header class={p.depth ? "ov-subhead" : "ov-titlebar"}>
                 <Show when={!p.depth ? b.up : null}>
-                  {(u) => <button class="ov-up" title={`Open the ${u().label} overview`} onClick={(e) => props.onOverview(u().path, mod(e))} onAuxClick={middle(() => props.onOverview(u().path, true))}>← {u().name}</button>}
+                  {(u) => <button class="ov-up" title={`Open the ${u().label} overview`} onClick={(e) => props.onOverview(u().path, mod(e))} onAuxClick={middle(() => props.onOverview(u().path, true))} onContextMenu={menu({ path: u().path, folder: true })}>← {u().name}</button>}
                 </Show>
                 <Show when={p.depth} fallback={<h1 class="ov-h1">{b.name}</h1>}>
-                  <h2 class="ov-h2 ov-link" onClick={(e) => props.onOverview(b.path, mod(e))} onAuxClick={middle(() => props.onOverview(b.path, true))}>{b.name}</h2>
+                  <h2 class="ov-h2 ov-link" onClick={(e) => props.onOverview(b.path, mod(e))} onAuxClick={middle(() => props.onOverview(b.path, true))} onContextMenu={menu({ path: b.path, folder: true })}>{b.name}</h2>
                 </Show>
                 <Show when={b.typeLabel}><span class="ov-kind">{b.typeLabel}</span></Show>
                 <For each={b.fields}>{(f) => <span class="ov-field" title={f.label}>{f.value}</span>}</For>
@@ -319,7 +331,8 @@ export function Overview(props: OverviewProps) {
                         <button class={`ov-hlink ${l.missing ? "missing" : ""}`} disabled={l.missing}
                           title={l.missing ? `${l.path} isn't there` : l.folder ? `Open the ${l.name} overview` : `Open ${l.path}`}
                           onClick={(e) => (l.folder ? props.onOverview(l.path, mod(e)) : props.onOpen(l.path, mod(e)))}
-                          onAuxClick={middle(() => (l.folder ? props.onOverview(l.path, true) : props.onOpen(l.path, true)))}>{l.name}</button>
+                          onAuxClick={middle(() => (l.folder ? props.onOverview(l.path, true) : props.onOpen(l.path, true)))}
+                          onContextMenu={l.missing ? undefined : menu({ path: l.path, folder: l.folder })}>{l.name}</button>
                       )}
                     </For>
                   </span>
@@ -338,7 +351,7 @@ export function Overview(props: OverviewProps) {
                 <For each={b.rows}>
                   {(row) => (
                     <Show when={b.display === "full" && p.depth < 1} fallback={
-                      <div class="ov-sub-row" tabindex={0} role="button" onClick={(e) => props.onOverview(row.path, mod(e))} onAuxClick={middle(() => props.onOverview(row.path, true))} onKeyDown={(e) => { if (e.key === "Enter") props.onOverview(row.path, mod(e)); }}>
+                      <div class="ov-sub-row" tabindex={0} role="button" onClick={(e) => props.onOverview(row.path, mod(e))} onAuxClick={middle(() => props.onOverview(row.path, true))} onContextMenu={menu({ path: row.path, folder: true })} onKeyDown={(e) => { if (e.key === "Enter") props.onOverview(row.path, mod(e)); }}>
                         <span class="ov-group-name">{row.name}</span>
                         <Show when={row.label}><span class="ov-kind">{row.label}</span></Show>
                         <For each={row.fields}>{(f) => <span class="ov-field">{f.value}</span>}</For>
@@ -359,7 +372,7 @@ export function Overview(props: OverviewProps) {
   );
 
   return (
-    <div class="overview-pane" style={{ display: props.visible() ? "flex" : "none" }}>
+    <div class="overview-pane" style={{ display: props.visible() ? "flex" : "none" }} onContextMenu={menu(null)}>
       <div class="ov-toolbar">
         <Show when={props.layout().own}><span class="ov-note">This folder has its own layout</span></Show>
         <span class="ov-spacer" />

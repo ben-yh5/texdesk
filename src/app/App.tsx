@@ -33,7 +33,7 @@ import { STARTERS } from "../workspace/starters";
 import { SearchFile, SearchHit, searchFile, searchFiles } from "../workspace/search";
 import { applyGlobalMigration, applyMigration, describePlan, hasLegacySetup, mergeSettings, planGlobalMigration, planMigration } from "../workspace/migrate";
 import { PaletteView, PickItem, createPalette } from "./Palette";
-import { ALL_KINDS, HeaderLink, Kinds, NewAction, Overview, ResolvedBlock } from "./Overview";
+import { ALL_KINDS, HeaderLink, Kinds, MenuTarget, NewAction, Overview, ResolvedBlock } from "./Overview";
 import { OverviewInput, buildOverview, filesView, findGroup, folderMetas as metasOf, mergeOrder, subfolderRows } from "../workspace/overview";
 import { DebugPanel } from "./DebugPanel";
 import { SettingsScope, SettingsView } from "./Settings";
@@ -3049,6 +3049,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         actionsFor={(kind, folder) => newActions(kind, folder)}
         links={(p) => ({ in: linkIndex().get(join(r, p))?.length ?? 0, out: outgoing().get(join(r, p)) ?? 0 })}
         onOpen={(p, newTab) => void (newTab || !t() ? openPath(join(r, p)) : openInTab(t()!.id, join(r, p)))}
+        onMenu={(e, target) => overviewMenu(e, target, t())}
         scroll={{ top: overviewScroll.get(t()?.path ?? "") ?? 0, save: (top) => { const p = t()?.path; if (p) overviewScroll.set(p, top); } }}
         onOverview={(p, newTab) => void openOverview(p ? join(r, p) : r, newTab ? {} : { replace: t()?.id })}
         onReorder={(folder, names) => { keepOpen(t()?.id); void saveOrder(folder, names); }}
@@ -3344,12 +3345,76 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       "separator",
       cmdItem("toggle_pdf", "Hide PDF"),
     ] : [
+      ...historyItems(tab),
       { label: "Open Externally", run: () => host.openExternal(tab.path!).catch(fail) },
-      { label: "Reveal in Finder", run: () => host.openExternal(dirname(tab.path!)).catch(fail) },
+      ...pathItems(tab.path!),
       "separator",
       { label: "Close Tab", hint: shortcut("close_tab"), run: () => closeTab(tab.id) },
     ];
     setCtxMenu({ x, y, items });
+  }
+
+  /**
+   * Opens a file or folder (absolute) from a menu: `here` in tab `from` (like a click in an
+   * overview), in a `tab` of its own, or in a new group to the `side` of `from`'s (else the text's).
+   */
+  async function openAs(abs: string, how: "here" | "tab" | "side", from?: Tab | null) {
+    const dir = await isDirectory(abs);
+    if (how === "here" && from) return openInTab(from.id, abs);
+    if (how !== "side") return dir ? openOverview(abs) : openPath(abs);
+    const where: Where = { group: (from && findTab(layout(), (t) => t.id === from.id)?.group.id) || textGroup(), side: "right" };
+    if (dir) return openOverview(abs, { where });
+    if (extname(abs) === "pdf") return openPdf(abs, where);
+    if (BINARY_EXT.has(extname(abs))) return openPath(abs);
+    await showFile(abs, undefined, where);
+  }
+
+  /** "Open…" items for a file or folder (absolute): in a new tab or beside; with `from`, in that tab too. */
+  function openItems(abs: string, isDir: boolean, from?: Tab | null): ContextItem[] {
+    const what = isDir ? "Overview" : "";
+    return [
+      ...(from ? [{ label: isDir ? "Open Overview" : "Open", run: () => openAs(abs, "here", from) }] : []),
+      { label: `Open ${what ? what + " " : ""}in New Tab`, hint: from ? "⌘-click" : undefined, run: () => openAs(abs, "tab", from) },
+      { label: `Open ${what ? what + " " : ""}to the Side`, run: () => openAs(abs, "side", from) },
+    ];
+  }
+
+  /** Copy Path and Reveal in Finder for a file or folder (absolute). */
+  function pathItems(abs: string): ContextItem[] {
+    const r = root();
+    return [
+      { label: "Copy Path", run: () => host.writeClipboardText(abs).catch(fail) },
+      ...(r && abs.startsWith(r + "/") ? [{ label: "Copy Relative Path", run: () => host.writeClipboardText(relative(r, abs)).catch(fail) }] : []),
+      { label: "Reveal in Finder", run: () => (r && abs.startsWith(r + "/") ? revealInFinder(relative(r, abs)) : host.openExternal(dirname(abs)).catch(fail)) },
+    ];
+  }
+
+  /** Back and Forward in a tab, when it has somewhere to go. */
+  function historyItems(tab: Tab): ContextItem[] {
+    if (!tab.back?.length && !tab.forward?.length) return [];
+    return [
+      { label: "Back", hint: shortcut("go_back"), disabled: !tab.back?.length, run: () => goHistory("back", tab.id) },
+      { label: "Forward", hint: shortcut("go_forward"), disabled: !tab.forward?.length, run: () => goHistory("forward", tab.id) },
+      "separator",
+    ];
+  }
+
+  /** Right-click in an overview: on a file or folder, ways to open it; elsewhere, the tab's history and the folder. */
+  function overviewMenu(e: MouseEvent, target: MenuTarget | null, tab: Tab | null) {
+    const r = root();
+    if (!r || !tab?.path) return;
+    const items: ContextItem[] = target
+      ? [
+          ...openItems(join(r, target.path), target.folder, tab),
+          ...(target.pdf ? ["separator" as const, ...openItems(join(r, target.pdf), false, tab).map((i) => (i === "separator" ? i : { ...i, label: i.label.replace(/^Open/, "Open PDF") }))] : []),
+          "separator",
+          ...pathItems(join(r, target.path)),
+        ]
+      : [
+          ...historyItems(tab),
+          ...pathItems(tab.path),
+        ];
+    setCtxMenu({ x: e.clientX, y: e.clientY, items });
   }
 
   /** Right-click on a tab. */
@@ -3359,17 +3424,15 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     setCtxMenu({
       x, y,
       items: [
+        ...historyItems(tab),
+        ...(tab.preview ? [{ label: "Keep Open", run: () => keepOpen(tab.id) }, "separator" as const] : []),
         { label: "Close", hint: shortcut("close_tab"), run: () => closeTab(tab.id) },
         { label: "Close Others", disabled: !group || group.tabs.length < 2, run: () => closeTabs(others(layout(), tab.id, "others").map((t) => t.id)) },
         { label: "Close to the Right", disabled: !others(layout(), tab.id, "right").length, run: () => closeTabs(others(layout(), tab.id, "right").map((t) => t.id)) },
         "separator",
         { label: "Split Right", hint: shortcut("split_right"), disabled: !group || group.tabs.length < 2, run: () => splitTab(tab.id, "right") },
         { label: "Split Left", disabled: !group || group.tabs.length < 2, run: () => splitTab(tab.id, "left") },
-        ...(tab.path ? [
-          "separator" as const,
-          { label: "Reveal in Finder", run: () => host.openExternal(dirname(tab.path!)).catch(fail) },
-          { label: "Copy Path", run: () => host.writeClipboardText(tab.path!).catch(fail) },
-        ] : []),
+        ...(tab.path ? ["separator" as const, ...pathItems(tab.path)] : []),
       ],
     });
   }
@@ -3595,6 +3658,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
             onDelete={(p) => void deleteEntry(p)}
             onReveal={(p) => void revealInFinder(p)}
             folderItems={folderItems}
+            openItems={(p, isDir) => openItems(join(root()!, p), isDir)}
+            pathItems={(p) => pathItems(join(root()!, p))}
             onOverview={(dir, preview) => void openOverview(dir ? join(root()!, dir) : root()!, { preview })}
             folderClick={config().folderClick}
             onHome={() => void openOverview(root()!)}

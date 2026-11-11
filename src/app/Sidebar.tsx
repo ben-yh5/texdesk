@@ -102,6 +102,9 @@ export interface SidebarProps {
    * Folder (e.g. New Class in a term), `manage` with the folder's own items (Set Folder Type…).
    */
   folderItems?(dir: string): { create: ContextItem[]; manage: ContextItem[] };
+  /** Right-click items that open a file or folder (in a new tab, to the side…), and that copy or reveal its path. */
+  openItems?(path: string, isDir: boolean): ContextItem[];
+  pathItems?(path: string): ContextItem[];
   /** Opens a folder's overview tab (`preview`: as the preview tab a next folder click replaces). */
   onOverview(dir: string, preview?: boolean): void;
   /** What clicking a folder's name does (the arrow always just opens/closes it). */
@@ -292,26 +295,32 @@ export function Sidebar(props: SidebarProps) {
     setMenu({ x: e.clientX, y: e.clientY, path });
   }
 
+  /** Right-click: a file's ways to open it, then its own items; a folder's also what can be made in it; the empty tree just that. */
   function menuItems(path: string | null): ContextItem[] {
     const dir = targetDir(path);
-    const extra = props.folderItems?.(dir) ?? { create: [], manage: [] };
-    return [
+    const folder = path === null || isDir().has(path);
+    const extra = folder ? props.folderItems?.(dir) ?? { create: [], manage: [] } : { create: [], manage: [] };
+    const create: ContextItem[] = folder ? [
       { label: "New File…", run: () => newEntry("file", dir) },
       { label: "New Folder…", run: () => newEntry("folder", dir) },
       ...extra.create,
-      ...(path === null ? [] : [
-        "separator" as const,
+    ] : [];
+    if (path === null) return create;
+    const open = props.openItems?.(path, folder) ?? (folder ? [{ label: "Open Overview", run: () => props.onOverview(path) }] : []);
+    const sections: ContextItem[][] = [
+      open,
+      create,
+      [
         { label: "Rename…", hint: "↩", run: () => rename(path) },
         { label: "Move to Trash", hint: "⌘⌫", run: () => props.onDelete(path) },
-        "separator" as const,
-        ...(isDir().has(path) ? [
-          { label: "Open Overview", run: () => props.onOverview(path) },
-          ...(props.onPin ? [{ label: props.pinned?.includes(path) ? "Unpin from Sidebar" : "Pin to Sidebar", run: () => props.onPin!(path, !props.pinned?.includes(path)) }] : []),
-          ...extra.manage,
-        ] : []),
-        { label: "Reveal in Finder", run: () => props.onReveal(path) },
-      ]),
+      ],
+      folder ? [
+        ...(props.onPin ? [{ label: props.pinned?.includes(path) ? "Unpin from Sidebar" : "Pin to Sidebar", run: () => props.onPin!(path, !props.pinned?.includes(path)) }] : []),
+        ...extra.manage,
+      ] : [],
+      props.pathItems?.(path) ?? [{ label: "Reveal in Finder", run: () => props.onReveal(path) }],
     ];
+    return sections.filter((s) => s.length).flatMap((s, i) => (i ? ["separator" as const, ...s] : s));
   }
 
   // ---- keyboard ----
