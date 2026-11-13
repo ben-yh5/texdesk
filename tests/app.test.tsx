@@ -1564,12 +1564,22 @@ describe("links between files", () => {
     expect(root.querySelector(".cm-tooltip-autocomplete")).toBeNull();
   });
 
-  it("clicking a link in the PDF opens the file it points to", async () => {
+  it("clicking a link in the PDF opens the file it points to, in the note's tab", async () => {
     const b = await boot({ ...files, [`${WS}/Fa30/1-CS101/hw/.build/hw2.pdf`]: "%PDF" }, hw);
     const [out] = await waitFor(() => b.pdf.viewers.length >= 1 && b.pdf.viewers);
     await waitFor(() => out.loads.length);
     out.onLink!("lecture3");
     await waitFor(() => b.editor().state.doc.toString().includes("Lecture 3"));
+    expect(tabs(b.root)[0]).toEqual(["lecture3.tex*"]);
+  });
+
+  it("a link to a folder in the PDF opens its overview in the note's tab", async () => {
+    const b = await boot({ ...files, [`${WS}/Fa30/1-CS101/hw/.build/hw2.pdf`]: "%PDF" }, hw);
+    const [out] = await waitFor(() => b.pdf.viewers.length >= 1 && b.pdf.viewers);
+    await waitFor(() => out.loads.length);
+    out.onLink!("1-CS101");
+    await waitFor(() => b.root.querySelector(".ov-h1")?.textContent === "1-CS101");
+    expect(tabs(b.root)[0]).toEqual(["1-CS101*"]);
   });
 
   const tabs = (root: HTMLElement) => [...root.querySelectorAll(".group")].map((g) => [...g.querySelectorAll(".tab")].map((t) => t.querySelector(".tab-name")!.textContent + (t.classList.contains("active") ? "*" : "")));
