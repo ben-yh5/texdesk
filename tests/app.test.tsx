@@ -1984,6 +1984,54 @@ describe("keeping up with the disk", () => {
     await waitFor(() => other.state.doc.toString().includes("Changed elsewhere"));
   });
 
+  /** Swaps in a compiler that records which documents it builds (after the build opening hw1 makes). */
+  async function countBuilds(b: Awaited<ReturnType<typeof boot>>) {
+    await waitFor(() => b.root.querySelector(".buildstatus.build-failed"));
+    const built: string[] = [];
+    b.host.compile = async (req) => { built.push(req.file); return { ok: true, cancelled: false, exitCode: 0, stdout: "", stderr: "", durationMs: 1, pdf: null, launchError: null }; };
+    return built;
+  }
+
+  it("the open document rebuilds when it changes on disk, but not again for TeXdesk's own save", async () => {
+    const b = await boot(workspace, hw1);
+    await waitFor(() => b.editor()?.state.doc.length);
+    const built = await countBuilds(b);
+    b.host.touch(hw1, "\\documentclass{article}\nChanged elsewhere");
+    await waitFor(() => built.length === 1);
+    expect(built).toEqual([hw1]);
+    type(b.editor(), "mine ");
+    await b.command("Save");
+    await waitFor(() => built.length === 2);
+    b.host.touch(hw1); // the watcher sees the save
+    await settle(500);
+    expect(built.length).toBe(2);
+  });
+
+  it("with unsaved edits, a change on disk rebuilds only once you reload it", async () => {
+    const b = await boot(workspace, hw1);
+    await waitFor(() => b.editor()?.state.doc.length);
+    const built = await countBuilds(b);
+    type(b.editor(), "mine ");
+    b.host.touch(hw1, "\\documentclass{article}\nElsewhere");
+    await waitFor(() => palTitle(b.root).includes("changed on disk"));
+    await settle(500);
+    expect(built).toEqual([]);
+    await b.palette("Reload from disk");
+    await waitFor(() => built.length === 1);
+  });
+
+  it("the last-built document rebuilds when it changes on disk while another file is open", async () => {
+    const notes = `${WS}/Fa30/1-CS101/hw/notes.md`;
+    const b = await boot({ ...workspace, [notes]: "# notes" }, hw1);
+    await waitFor(() => b.editor()?.state.doc.length);
+    const built = await countBuilds(b);
+    (await waitFor(() => [...b.root.querySelectorAll<HTMLElement>(".tree-row")].find((r) => r.querySelector(".tree-name")?.textContent === "notes.md"))).click();
+    await waitFor(() => b.editor().state.doc.toString() === "# notes");
+    b.host.touch(hw1, "\\documentclass{article}\nChanged elsewhere");
+    await waitFor(() => built.length === 1);
+    expect(built).toEqual([hw1]);
+  });
+
   it("the tab bar's Save PDF button saves a linked copy and shows it under the .tex", async () => {
     const hw2 = `${WS}/Fa30/1-CS101/hw/hw2.tex`;
     const built = `${WS}/Fa30/1-CS101/hw/.build/hw2.pdf`;
