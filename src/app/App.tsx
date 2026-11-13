@@ -714,11 +714,14 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   /** Set while asking whether to reload the current file over your unsaved edits. */
   let askingReload = false;
 
-  /** Files changed on disk (by TeXdesk or anything else): refresh the tree, backlinks and the open file. */
+  /** Files changed on disk (by TeXdesk or anything else): refresh the tree, backlinks and the open file, and rebuild changed documents. */
   function onDiskChange(r: string, paths: string[]) {
     if (root() !== r) return;
     for (const p of paths) texCache.delete(p);
-    for (const p of paths) if (shownIn(p)) void reloadFromDisk(p);
+    for (const p of paths) {
+      if (shownIn(p)) void reloadFromDisk(p);
+      else if (p === builder.lastRoot) void rebuildIfChanged(p);
+    }
     clearTimeout(treeTimer);
     treeTimer = setTimeout(() => void refreshFiles(), 150);
   }
@@ -748,6 +751,16 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     } finally { reloading = false; }
     if (path() === p) { setDirty(false); updateTitle(); }
     say(`${basename(p)} changed on disk — reloaded`);
+    if (TEX_EXT.has(extname(p)) && (path() === p || p === builder.lastRoot)) builder.schedule(p, config().build.debounceMs);
+  }
+
+  /** The last-built document changed on disk while not on screen: rebuild it, unless that was TeXdesk's own save. */
+  async function rebuildIfChanged(p: string) {
+    let text: string;
+    try { text = await host.readText(p); } catch { return; }
+    if (onDisk.get(p) === text) return;
+    onDisk.set(p, text);
+    builder.schedule(p, config().build.debounceMs);
   }
 
   /** The current file changed on disk while you have unsaved edits: reload it, or keep yours (saving then replaces it). */
