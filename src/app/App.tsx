@@ -393,7 +393,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         refreshMode(v);
       },
       onSave: () => void save(),
-      onOpenLink: (ref) => void followLink(ref, p, { create: true }),
+      onOpenLink: (ref) => void followLink(ref, p, { create: true, tab: textTabOf(p) }),
       onEditDiagram: (at) => void editDiagram({ at }),
       linkCandidates: (cmd) => linkCandidatesFor(cmd, p),
       linkHeadings: (target) => headingsOf(target, p),
@@ -810,9 +810,10 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   /**
    * Opens what a link points to: a workspace file (at the heading after `\#`, if any), a file
    * next to `fromFile`, or a URL. With `create`, a \link to a note that doesn't exist yet
-   * creates it next to `fromFile`, as in Obsidian.
+   * creates it next to `fromFile`, as in Obsidian. `tab`: in that tab, like a link in a browser
+   * tab (⌘[ comes back); otherwise in a tab of its own.
    */
-  async function followLink(ref: Pick<LinkRef, "command" | "target">, fromFile: string, opts: { create?: boolean } = {}) {
+  async function followLink(ref: Pick<LinkRef, "command" | "target">, fromFile: string, opts: { create?: boolean; tab?: string } = {}) {
     const ctx = linkContext();
     const figures = (await scopeAt(dirname(fromFile)))?.figuresDir;
     if (figures) ctx.searchDirs = [figures];
@@ -836,20 +837,23 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       }
     }
     if (!hit) { say(`Nothing found for \\${ref.command}{${ref.target}}`, true); return; }
-    if (hit.kind === "folder") { await openOverview(hit.path); return; }
+    if (hit.kind === "folder") { await (opts.tab ? openInTab(opts.tab, hit.path) : openOverview(hit.path)); return; }
     if (hit.kind === "url") {
       // Links can come from PDFs you didn't write: only hand web and mail links to the system.
       if (!/^(https?|mailto):/i.test(hit.url)) { say(`Not opening ${hit.url} (only web and mail links open from TeXdesk)`, true); return; }
       try { await host.openExternal(hit.url); } catch (err) { fail(err); }
       return;
     }
-    if (hit.path !== path()) await openPath(hit.path);
+    if (hit.path !== path()) await (opts.tab ? openInTab(opts.tab, hit.path) : openPath(hit.path));
     if (!anchor || !view || path() !== hit.path) return;
     const line = headingLine(view.state.doc.toString(), anchor);
     if (line === null) { say(`No heading “${anchor}” in ${basename(hit.path)}`, true); return; }
     view.dispatch({ selection: EditorSelection.cursor(view.state.doc.line(line).from), scrollIntoView: true });
     view.focus();
   }
+
+  /** The text tab showing `p`, if any. */
+  const textTabOf = (p: string) => findSpec(layout(), { kind: "text", path: p })?.tab.id;
 
   /** Heading titles in the file a \link{target} in `fromFile` points to. */
   function headingsOf(target: string, fromFile: string): string[] {
@@ -912,13 +916,13 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     return out;
   }
 
-  /** A link clicked in a PDF: resolved relative to the document it came from. */
-  function followPdfLink(target: string, pdf: string) {
+  /** A link clicked in a PDF: resolved relative to the document it came from; `tab`: opens in that tab. */
+  function followPdfLink(target: string, pdf: string, tab?: string) {
     const parts = pdf.split("/");
     const from = parts[parts.length - 2] === ".build"
       ? join(dirname(dirname(pdf)), basename(pdf).replace(/\.pdf$/, ".tex"))
       : pdf;
-    void followLink({ command: "link", target }, from);
+    void followLink({ command: "link", target }, from, { tab });
   }
 
   function followLinkCommand() {
@@ -3319,7 +3323,10 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         { label: "Paste", hint: "⌘V", run: pasteText },
         "separator",
         ...(isTex() ? [
-          ...(link ? [{ label: `Follow Link (${link.target})`, hint: shortcut("follow_link"), run: () => followLink(link, p) }] : []),
+          ...(link ? [
+            { label: `Follow Link (${link.target})`, hint: shortcut("follow_link"), run: () => followLink(link, p, { tab: textTabOf(p) }) },
+            ...(isUrl(link.target) ? [] : [{ label: "Open Link in New Tab", run: () => followLink(link, p) }]),
+          ] : []),
           cmdItem("insert_link", "Insert Link…"),
           "separator" as const,
           cmdItem("paste_as_code", "Paste as Code…"),
@@ -3333,10 +3340,12 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     });
   }
 
-  /** Right-click inside a PDF tab. */
-  /** Right-click inside a PDF tab, or (`tab` null) the PDF pane. */
-  function onPdfMenu(tab: Tab | null, point: { page: number; x: number; y: number } | null, x: number, y: number) {
+  /** Right-click inside a PDF tab, or (`tab` null) the PDF pane; `link`: on a link to that target. */
+  function onPdfMenu(tab: Tab | null, point: { page: number; x: number; y: number } | null, x: number, y: number, link?: string) {
+    const pdf = tab ? tab.path! : outputPdf();
+    const linkItems: ContextItem[] = link && pdf && !isUrl(link) ? [{ label: "Open Link in New Tab", run: () => followPdfLink(link, pdf) }, "separator"] : [];
     const items: ContextItem[] = !tab ? [
+      ...linkItems,
       { label: "Jump to Source Here", hint: "⌘-click", disabled: !point || !outputPdf(), run: () => point && syncFromPdf(point.page, point.x, point.y) },
       cmdItem("show_in_pdf", "Show Cursor in PDF"),
       "separator",
@@ -3345,6 +3354,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       "separator",
       cmdItem("toggle_pdf", "Hide PDF"),
     ] : [
+      ...linkItems,
       ...historyItems(tab),
       { label: "Open Externally", run: () => host.openExternal(tab.path!).catch(fail) },
       ...pathItems(tab.path!),
@@ -3477,8 +3487,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         visible={visible()}
         anchors={pdfAnchors}
         emptyMessage="Couldn't open this PDF"
-        onLink={followPdfLink}
-        onContextMenu={(pt, x, y) => { const cur = tab(); if (cur) onPdfMenu(cur, pt, x, y); }}
+        onLink={(target, pdf) => followPdfLink(target, pdf, tab()?.id)}
+        onContextMenu={(pt, x, y, link) => { const cur = tab(); if (cur) onPdfMenu(cur, pt, x, y, link); }}
       />
     );
   }
@@ -3757,7 +3767,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
               emptyMessage="The PDF shows here once the document builds"
               onSync={(p, x, y) => void syncFromPdf(p, x, y)}
               onLink={followPdfLink}
-              onContextMenu={(pt, x, y) => onPdfMenu(null, pt, x, y)}
+              onContextMenu={(pt, x, y, link) => onPdfMenu(null, pt, x, y, link)}
               api={(a) => (outputApi = a)}
               follow={{ on: config().editor.followEdits, toggle: () => void toggleFollowEdits() }}
             />

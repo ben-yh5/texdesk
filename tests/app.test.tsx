@@ -1571,6 +1571,42 @@ describe("links between files", () => {
     out.onLink!("lecture3");
     await waitFor(() => b.editor().state.doc.toString().includes("Lecture 3"));
   });
+
+  const tabs = (root: HTMLElement) => [...root.querySelectorAll(".group")].map((g) => [...g.querySelectorAll(".tab")].map((t) => t.querySelector(".tab-name")!.textContent + (t.classList.contains("active") ? "*" : "")));
+  const rightClick = (el: Element) => el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+  const menuItem = (root: HTMLElement, label: string) => waitFor(() => [...root.querySelectorAll<HTMLButtonElement>(".ctx-menu-item")].find((i) => i.firstChild!.textContent === label));
+
+  it("following a link goes there in the same tab, like a browser; Back comes back", async () => {
+    const { root, editor, command } = await cursorOn("lecture3");
+    await command("Follow link");
+    await waitFor(() => editor().state.doc.toString().includes("Lecture 3"));
+    expect(tabs(root)[0]).toEqual(["lecture3.tex*"]);
+    await command("Back");
+    await waitFor(() => editor().state.doc.toString().includes("Uses"));
+    expect(tabs(root)[0]).toEqual(["hw2.tex*"]);
+  });
+
+  it("right-clicking a link offers to open it in a new tab", async () => {
+    const { root, editor } = await cursorOn("lecture3");
+    editor().posAtCoords = () => editor().state.selection.main.head; // jsdom has no layout
+    rightClick(root.querySelector(".cm-content")!);
+    (await menuItem(root, "Open Link in New Tab"))!.click();
+    await waitFor(() => editor().state.doc.toString().includes("Lecture 3"));
+    expect(tabs(root)[0]).toEqual(["hw2.tex", "lecture3.tex*"]);
+  });
+
+  it("right-clicking a link in the PDF offers to open it in a new tab", async () => {
+    const b = await boot({ ...files, [`${WS}/Fa30/1-CS101/hw/.build/hw2.pdf`]: "%PDF" }, hw);
+    await waitFor(() => b.pdf.viewers.length >= 1 && b.pdf.viewers[0].loads.length);
+    const link = document.createElement("a");
+    link.className = "pdf-link";
+    link.dataset.target = "lecture3";
+    b.root.querySelector(".pdf-side .preview-viewer")!.append(link);
+    rightClick(link);
+    (await menuItem(b.root, "Open Link in New Tab"))!.click();
+    await waitFor(() => b.editor().state.doc.toString().includes("Lecture 3"));
+    expect(tabs(b.root)[0]).toEqual(["hw2.tex", "lecture3.tex*"]);
+  });
 });
 
 describe("Save PDF as…", () => {
