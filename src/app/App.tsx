@@ -3766,7 +3766,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
               anchors={pdfAnchors}
               emptyMessage="The PDF shows here once the document builds"
               onSync={(p, x, y) => void syncFromPdf(p, x, y)}
-              onLink={followPdfLink}
+              onLink={(target, pdf) => followPdfLink(target, pdf, path() ? textTabOf(path()!) : undefined)}
               onContextMenu={(pt, x, y, link) => onPdfMenu(null, pt, x, y, link)}
               api={(a) => (outputApi = a)}
               follow={{ on: config().editor.followEdits, toggle: () => void toggleFollowEdits() }}
