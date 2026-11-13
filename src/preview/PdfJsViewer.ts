@@ -299,6 +299,7 @@ export class PdfJsViewer implements Viewer {
       el.style.height = `${Math.abs(y2 - y1) * scale}px`;
       const target = a.unsafeUrl ?? a.url;
       el.title = target ?? "";
+      if (target) el.dataset.target = target;
       el.addEventListener("click", (e) => {
         if (e.metaKey || e.ctrlKey) return; // ⌘-click is SyncTeX
         e.preventDefault();

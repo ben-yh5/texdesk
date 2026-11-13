@@ -27,7 +27,8 @@ export interface PdfPaneProps {
   emptyMessage: string;
   onSync?(page: number, x: number, y: number): void;
   onLink(target: string, pdf: string): void;
-  onContextMenu(point: { page: number; x: number; y: number } | null, x: number, y: number): void;
+  /** `link`: the target of the link right-clicked (a URL, or a path as written), if any. */
+  onContextMenu(point: { page: number; x: number; y: number } | null, x: number, y: number, link?: string): void;
   /** Receives the pane's API. (Not `ref`: Solid treats that name specially.) */
   api?(api: PdfPaneApi): void;
   /** The "Follow editor" switch in the corner (the build output only). */
@@ -97,7 +98,8 @@ export function PdfPane(props: PdfPaneProps) {
       style={{ display: props.visible ? "block" : "none" }}
       onContextMenu={(e) => {
         e.preventDefault();
-        props.onContextMenu(viewer?.pointAt(e.clientX, e.clientY) ?? null, e.clientX, e.clientY);
+        const link = (e.target as Element).closest<HTMLElement>(".pdf-link")?.dataset.target;
+        props.onContextMenu(viewer?.pointAt(e.clientX, e.clientY) ?? null, e.clientX, e.clientY, link);
       }}
     >
       <div class="preview-viewer" ref={el} />
