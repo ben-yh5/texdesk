@@ -2167,7 +2167,7 @@ describe("folder overview", () => {
     const right = (el: Element) => el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
     right(row("hw1.tex"));
     await waitFor(() => items().length);
-    expect(labels()).toEqual(["Open", "Open in New Tab", "Copy Path", "Copy Relative Path", "Reveal in Finder"]);
+    expect(labels()).toEqual(["Open", "Open in New Tab", "Move to Trash", "Copy Path", "Copy Relative Path", "Reveal in Finder"]);
     b.key("Escape");
     right(row("Max Flow"));
     await waitFor(() => items().length);
@@ -2185,6 +2185,31 @@ describe("folder overview", () => {
     expect(items()[0].hasAttribute("disabled") || items()[0].classList.contains("disabled")).toBe(true);
     pick("Forward");
     await waitFor(() => names().join() === "hw1.tex,intro.tex,flows.tex");
+  });
+
+  it("right-clicking a file or folder in an overview can move it to the Trash, after asking", async () => {
+    const b = await open();
+    const row = (title: string) => [...b.root.querySelectorAll<HTMLElement>(".overview-pane .ov-row")].find((r) => r.querySelector(".ov-title")!.textContent === title);
+    const items = () => [...b.root.querySelectorAll<HTMLElement>(".ctx-menu-item")];
+    const pick = (label: string) => items().find((x) => x.firstChild!.textContent === label)!.click();
+    const right = (el: Element) => el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+    right(row("Max Flow")!);
+    await waitFor(() => items().length);
+    pick("Move to Trash");
+    await b.palette("Cancel");
+    expect(b.host.files.has(`${C}/notes/flows.tex`)).toBe(true);
+    right(row("Max Flow")!);
+    await waitFor(() => items().length);
+    pick("Move to Trash");
+    await b.palette("Move to Trash");
+    await waitFor(() => !row("Max Flow"));
+    expect(b.host.trashed).toEqual([`${C}/notes/flows.tex`]);
+    right([...b.root.querySelectorAll(".overview-pane .ov-group-name")].find((h) => h.textContent === "notes")!);
+    await waitFor(() => items().length);
+    pick("Move to Trash");
+    await b.palette("Move to Trash");
+    await waitFor(() => !row("Introduction"));
+    expect(b.host.trashed).toEqual([`${C}/notes/flows.tex`, `${C}/notes`]);
   });
 
   it("a sideways swipe goes back and forward; an overview keeps its scroll", async () => {

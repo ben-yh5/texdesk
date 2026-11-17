@@ -3421,6 +3421,8 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
           ...openItems(join(r, target.path), target.folder, tab),
           ...(target.pdf ? ["separator" as const, ...openItems(join(r, target.pdf), false, tab).map((i) => (i === "separator" ? i : { ...i, label: i.label.replace(/^Open/, "Open PDF") }))] : []),
           "separator",
+          { label: "Move to Trash", run: () => void deleteEntry(target.path) },
+          "separator",
           ...pathItems(join(r, target.path)),
         ]
       : [
