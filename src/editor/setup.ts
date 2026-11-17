@@ -6,6 +6,7 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { HighlightStyle, bracketMatching, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { codeBlocks, latexLanguage } from "./codeblocks";
 import { linter, lintGutter } from "@codemirror/lint";
+import { autocompletion } from "@codemirror/autocomplete";
 import { Vim, vim } from "@replit/codemirror-vim";
 import { links, openLink } from "./links";
 import { diagramHover, editDiagramAt } from "../diagram/hover";
@@ -197,7 +198,14 @@ export function editorState(o: EditorOptions): EditorState {
       links, o.onOpenLink ? openLink.of(o.onOpenLink) : [],
       diagramHover, o.onEditDiagram ? editDiagramAt.of(o.onEditDiagram) : [],
     );
-  }
+  } else ext.push(noCompletion);
   if (o.extra) ext.push(...o.extra);
   return EditorState.create({ doc: o.doc, extensions: ext });
 }
+
+// Autocomplete's timers outlive a view's setState (a tab switch, back / forward) and throw in a
+// state without its field, so every state a view can be given has one: here, with no sources.
+const noCompletion = autocompletion({ override: [] });
+
+/** The state of a view with no file in it. */
+export const blankState = () => EditorState.create({ extensions: noCompletion });

@@ -5,7 +5,7 @@ import { LanguageDescription } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { FileTimes, Host, MenuEntry, MenuSection, WalkEntry, basename, dirname, extname, join, relative } from "../host/types";
 import { isolateHistory, redo, undo } from "@codemirror/commands";
-import { applySettings, editorState } from "../editor/setup";
+import { applySettings, blankState, editorState } from "../editor/setup";
 import { extractMacros, mathMacros, setMacros } from "../editor/mathpreview";
 import { extractEnvironments, setUserEnvironments } from "../editor/latexcomplete";
 import { insertFigure, saveFigure } from "../editor/images";
@@ -401,7 +401,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
   }
 
   function mountEditor(g: string, el: HTMLElement) {
-    const v = new EditorView({ state: EditorState.create(), parent: el });
+    const v = new EditorView({ state: blankState(), parent: el });
     v.dom.addEventListener("paste", onPaste, true);
     v.dom.addEventListener("contextmenu", (e) => void onEditorContextMenu(e, g));
     v.dom.addEventListener("focusin", () => void focusText(g));
@@ -440,7 +440,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       if (!have || wanted(gid) === have) continue;
       if (kept(have)) keepState(have, views.get(gid)!);
       viewDoc.set(gid, null);
-      if (!wanted(gid)) views.get(gid)!.setState(EditorState.create());
+      if (!wanted(gid)) views.get(gid)!.setState(blankState());
     }
     for (const gid of [...views.keys()]) {
       const want = wanted(gid);
@@ -451,7 +451,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         if (!state || wanted(gid) !== want || !views.has(gid) || shownIn(want)) continue; // changed while loading
         docs.delete(want);
       }
-      views.get(gid)!.setState(state ?? EditorState.create());
+      views.get(gid)!.setState(state ?? blankState());
       const scroll = want && scrolls.get(want);
       if (scroll) views.get(gid)!.dispatch({ effects: scroll });
       viewDoc.set(gid, want);
@@ -1397,7 +1397,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
 
   /** Closes every tab (without saving to the old layout's prefs) and starts from `l`. */
   function resetLayout(l: Layout) {
-    for (const [g] of viewDoc) { viewDoc.set(g, null); views.get(g)?.setState(EditorState.create()); }
+    for (const [g] of viewDoc) { viewDoc.set(g, null); views.get(g)?.setState(blankState()); }
     docs.clear();
     setLayoutSignal(l);
     clearCurrent();
