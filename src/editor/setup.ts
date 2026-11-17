@@ -97,6 +97,8 @@ export interface EditorOptions {
   runtime: SnippetRuntime;
   onUpdate(view: EditorView, docChanged: boolean): void;
   onSave(): void;
+  /** ⌘F / ⌘G moved to a match. */
+  onFind?(view: EditorView): void;
   /** ⌘-click on a link in a .tex file. */
   onOpenLink?(ref: LinkRef): void;
   /** The "Edit diagram" button on a hovered tikzpicture (`pos` is in the picture). */
@@ -183,6 +185,7 @@ export function editorState(o: EditorOptions): EditorState {
     keymap.of([{ key: "Mod-s", run: () => (o.onSave(), true), preventDefault: true }, ...defaultKeymap, ...historyKeymap]),
     EditorView.updateListener.of((u) => {
       if (u.docChanged || u.selectionSet) o.onUpdate(u.view, u.docChanged);
+      if (o.onFind && u.transactions.some((tr) => tr.isUserEvent("select.search"))) o.onFind(u.view);
     }),
   ];
   if (o.tex) {

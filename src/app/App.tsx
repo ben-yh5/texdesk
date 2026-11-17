@@ -393,6 +393,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
         refreshMode(v);
       },
       onSave: () => void save(),
+      onFind: (v) => { if (p === path()) void followLine(p, v.state.doc.lineAt(v.state.selection.main.head).number); },
       onOpenLink: (ref) => void followLink(ref, p, { create: true, tab: textTabOf(p) }),
       onEditDiagram: (at) => void editDiagram({ at }),
       linkCandidates: (cmd) => linkCandidatesFor(cmd, p),
@@ -1493,6 +1494,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
       const from = Math.min(l.from + hit.from, l.to), to = Math.min(l.from + hit.to, l.to);
       view.dispatch({ selection: EditorSelection.range(from, to), effects: EditorView.scrollIntoView(from, { y: "center" }) });
       if (focus) view.focus();
+      void followLine(hit.path, hit.line);
     }
   }
 
@@ -2202,19 +2204,23 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
 
   /** After a build: scroll the PDF pane (if it's showing) to the last edited line, quietly. */
   async function followEdit() {
-    const edit = lastEdit;
+    if (lastEdit) await followLine(lastEdit.file, lastEdit.line, { quiet: true, afterLoad: true });
+  }
+
+  /** Scrolls the PDF pane (if it's showing and following the editor) to `line` of `file`. */
+  async function followLine(file: string, line: number, opts: { quiet?: boolean; afterLoad?: boolean } = {}) {
     const src = outputSource();
-    if (!edit || !src || !config().editor.followEdits) return;
+    if (!src || !config().editor.followEdits) return;
     if (!pdfShown()) return;
-    // An edit in the preamble has no place of its own in the PDF.
-    const text = view && path() === edit.file ? view.state.doc.toString() : texCache.get(edit.file);
+    // A line in the preamble has no place of its own in the PDF.
+    const text = view && path() === file ? view.state.doc.toString() : texCache.get(file);
     const begin = text ? text.split("\n").findIndex((l) => /^[^%]*\\begin\{document\}/.test(l)) + 1 : 0;
-    if (begin && edit.line <= begin) return;
+    if (begin && line <= begin) return;
     const sync = await loadSync(src);
     // Only where the line itself (or one close by) is: a line with no output of its own (a
     // definition, a blank line) can map far away.
-    const locs = (sync ? forwardSearchAll(sync, edit.file, edit.line, dirname(src)) : []).filter((l) => Math.abs((l.line ?? edit.line) - edit.line) <= 5);
-    if (locs.length) outputApi?.reveal(locs, { quiet: true, afterLoad: true });
+    const locs = (sync ? forwardSearchAll(sync, file, line, dirname(src)) : []).filter((l) => Math.abs((l.line ?? line) - line) <= 5);
+    if (locs.length) outputApi?.reveal(locs, opts);
   }
 
   /** ⌘S: saves (which builds); on an unchanged .tex file, rebuilds it, e.g. to retry after a failed build. */
