@@ -7,7 +7,7 @@ import { App } from "../src/app/App";
 import { formatWorkspace, emptyWorkspace, type WorkspaceFile } from "../src/workspace/model";
 import { STARTERS } from "../src/workspace/starters";
 import { fixtureFiles, memoryHost, press, settle, type } from "./helpers";
-import { closeSearchPanel } from "@codemirror/search";
+import { SearchQuery, closeSearchPanel, findNext, openSearchPanel, setSearchQuery } from "@codemirror/search";
 import { forEachDiagnostic } from "@codemirror/lint";
 import type { Anchor, Viewer, ViewerFactory } from "../src/preview/viewer";
 import type { PdfLocation } from "../src/preview/synctex";
@@ -904,6 +904,30 @@ describe("Phase 5: preview", () => {
     await waitFor(() => out.reveals.length);
     expect(out.reveals[0].page).toBe(2);
     expect(out.quietReveals).toEqual([]); // highlighted, like ⌘⇧J
+  });
+
+  it("clicking a ⌘⇧F result shows its line in the PDF", async () => {
+    const { root, key, out } = await bootPreview();
+    await waitFor(() => out.loads.length);
+    key("f", { metaKey: true, shiftKey: true });
+    const input = await waitFor(() => root.querySelector<HTMLInputElement>(".search-input"));
+    input.value = "Page two";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    const hit = await waitFor(() => root.querySelector<HTMLElement>(".search-hit"));
+    hit.click();
+    await waitFor(() => out.reveals.length);
+    expect(out.reveals[0].page).toBe(2);
+    expect(out.quietReveals).toEqual([]); // highlighted, like ⌘⇧J
+  });
+
+  it("going to a ⌘F match shows its line in the PDF", async () => {
+    const { editor, out } = await bootPreview();
+    await waitFor(() => out.loads.length);
+    openSearchPanel(editor());
+    editor().dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: "Page two" })) });
+    findNext(editor());
+    await waitFor(() => out.reveals.length);
+    expect(out.reveals[0].page).toBe(2);
   });
 
   it("⌘-click in the PDF jumps to the source line", async () => {

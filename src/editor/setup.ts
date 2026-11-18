@@ -6,6 +6,7 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { HighlightStyle, bracketMatching, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { codeBlocks, latexLanguage } from "./codeblocks";
 import { linter, lintGutter } from "@codemirror/lint";
+import { autocompletion } from "@codemirror/autocomplete";
 import { Vim, vim } from "@replit/codemirror-vim";
 import { links, openLink } from "./links";
 import { diagramHover, editDiagramAt } from "../diagram/hover";
@@ -96,6 +97,8 @@ export interface EditorOptions {
   runtime: SnippetRuntime;
   onUpdate(view: EditorView, docChanged: boolean): void;
   onSave(): void;
+  /** ⌘F / ⌘G moved to a match. */
+  onFind?(view: EditorView): void;
   /** ⌘-click on a link in a .tex file. */
   onOpenLink?(ref: LinkRef): void;
   /** The "Edit diagram" button on a hovered tikzpicture (`pos` is in the picture). */
@@ -182,6 +185,7 @@ export function editorState(o: EditorOptions): EditorState {
     keymap.of([{ key: "Mod-s", run: () => (o.onSave(), true), preventDefault: true }, ...defaultKeymap, ...historyKeymap]),
     EditorView.updateListener.of((u) => {
       if (u.docChanged || u.selectionSet) o.onUpdate(u.view, u.docChanged);
+      if (o.onFind && u.transactions.some((tr) => tr.isUserEvent("select.search"))) o.onFind(u.view);
     }),
   ];
   if (o.tex) {
@@ -197,7 +201,14 @@ export function editorState(o: EditorOptions): EditorState {
       links, o.onOpenLink ? openLink.of(o.onOpenLink) : [],
       diagramHover, o.onEditDiagram ? editDiagramAt.of(o.onEditDiagram) : [],
     );
-  }
+  } else ext.push(noCompletion);
   if (o.extra) ext.push(...o.extra);
   return EditorState.create({ doc: o.doc, extensions: ext });
 }
+
+// Autocomplete's timers outlive a view's setState (a tab switch, back / forward) and throw in a
+// state without its field, so every state a view can be given has one: here, with no sources.
+const noCompletion = autocompletion({ override: [] });
+
+/** The state of a view with no file in it. */
+export const blankState = () => EditorState.create({ extensions: noCompletion });
