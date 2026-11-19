@@ -40,6 +40,7 @@ export class BuildController {
   lastRoot: string | null = null;
   private listeners = new Set<() => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private asideTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private token = 0;
   private unwatchIncludes: (() => void)[] = [];
 
@@ -105,26 +106,7 @@ export class BuildController {
       if (d.severity === "error" && d.line && /Undefined control sequence/.test(d.message)) d.hint = undefinedCommand(log, d.line) ?? undefined;
     }
 
-    let exp: ExportResult | undefined;
-    const saved: ExportResult[] = [];
-    if (result.ok && result.pdf && cfg.exportPdf) {
-      const name = pdfName(cfg.pdfName, { ...ctx.vars, stem });
-      try {
-        exp = await exportPdf(this.host, source, result.pdf, name);
-      } catch (err) {
-        exp = { status: "skipped", path: join(dir, name), reason: `couldn't export: ${String(err)}` };
-      }
-    }
-    if (result.ok && result.pdf) {
-      for (const dest of await linkedPdfs(this.host, source)) {
-        if (exp && "path" in exp && dest === exp.path) continue;
-        try {
-          saved.push(await exportTo(this.host, source, result.pdf, dest, { linked: true }));
-        } catch (err) {
-          saved.push({ status: "skipped", path: dest, reason: `couldn't update ${basename(dest)}: ${String(err)}` });
-        }
-      }
-    }
+    const { exp, saved } = result.ok && result.pdf ? await this.exports(source, result.pdf, cfg, ctx) : { exp: undefined, saved: [] };
 
     this.set({
       state: result.ok ? "ok" : "failed",
@@ -138,6 +120,47 @@ export class BuildController {
     });
     if (token === this.token) await this.watchIncludes(source);
     return true;
+  }
+
+  /** Builds a document that isn't the one on screen (it changed on disk): updates its PDF and exported copies, leaving the status alone. Debounced per document. */
+  scheduleAside(file: string, delay = DEBOUNCE_MS) {
+    clearTimeout(this.asideTimers.get(file));
+    this.asideTimers.set(file, setTimeout(() => {
+      this.asideTimers.delete(file);
+      void this.buildAside(file);
+    }, delay));
+  }
+
+  private async buildAside(source: string) {
+    const { searchPaths, cfg, ctx } = await this.paths(source);
+    let result;
+    try { result = await this.host.compile({ file: source, searchPaths, tectonic: cfg.tectonic }); } catch { return; }
+    if (result.ok && result.pdf) await this.exports(source, result.pdf, cfg, ctx);
+  }
+
+  /** Copies a fresh build next to its source (if enabled) and over the PDFs saved from it. */
+  private async exports(source: string, pdf: string, cfg: WorkspaceConfig, ctx: BuildContext) {
+    const dir = dirname(source);
+    const stem = basename(source).replace(/\.tex$/, "");
+    let exp: ExportResult | undefined;
+    const saved: ExportResult[] = [];
+    if (cfg.exportPdf) {
+      const name = pdfName(cfg.pdfName, { ...ctx.vars, stem });
+      try {
+        exp = await exportPdf(this.host, source, pdf, name);
+      } catch (err) {
+        exp = { status: "skipped", path: join(dir, name), reason: `couldn't export: ${String(err)}` };
+      }
+    }
+    for (const dest of await linkedPdfs(this.host, source)) {
+      if (exp && "path" in exp && dest === exp.path) continue;
+      try {
+        saved.push(await exportTo(this.host, source, pdf, dest, { linked: true }));
+      } catch (err) {
+        saved.push({ status: "skipped", path: dest, reason: `couldn't update ${basename(dest)}: ${String(err)}` });
+      }
+    }
+    return { exp, saved };
   }
 
   /** The folders a build of `source` searches (for building part of it on its own). */
@@ -175,6 +198,7 @@ export class BuildController {
 
   dispose() {
     clearTimeout(this.timer);
+    this.asideTimers.forEach((t) => clearTimeout(t));
     this.unwatchIncludes.forEach((f) => f());
   }
 }
