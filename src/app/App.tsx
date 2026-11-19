@@ -56,7 +56,7 @@ import { Workbench, DropTarget, TabLabel } from "./Workbench";
 import { PdfPane, PdfPaneApi } from "./PdfPane";
 import { PdfNav } from "./PdfNav";
 import {
-  Layout, Tab, TabSpec, activate, activeTab, deserialize, emptyLayout, findSpec, findTab, groupById, keepTab, openPreview, others, place,
+  Layout, Tab, TabSpec, activate, addTab, activeTab, deserialize, emptyLayout, findSpec, findTab, groupById, keepTab, openPreview, others, place,
   forget, remembered, removeTab, renamePaths, resize, retarget, reveal as revealTab, serialize, split, travel, SavedLayout,
 } from "./layout";
 import { dragging } from "./dnd";
@@ -2857,6 +2857,13 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     await reconcile();
   }
 
+  /** ⌘T: the workspace's home page in a new tab of the focused group, even if it's open in another. */
+  async function newTab() {
+    await refreshTimes(entries(), true);
+    setLayout(addTab(layout(), { kind: "overview", path: root()! }, layout().activeGroup).layout);
+    await reconcile();
+  }
+
   /**
    * A file clicked in an overview, shown in the overview's tab like a link in a browser tab
    * (⌘[ comes back). Folders, the open document's own build (the PDF pane), files open in
@@ -3160,7 +3167,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     { id: "replace", label: "Find and replace", hint: "⌥⌘F", accel: "Mod-Alt-f", run: () => { const v = diagramCode ?? view; if (v) openFind(v, true); }, when: hasFile, needs: "an open file" },
     { id: "follow_edits", label: "Toggle PDF follows editor", run: toggleFollowEdits },
     { id: "toggle_pdf", label: "Toggle PDF", key: "toggle_pdf", run: togglePreview },
-    { id: "new_tab", label: "New tab", key: "new_tab", run: () => openOverview(root()!), when: () => !!root(), needs: OPEN_FOLDER },
+    { id: "new_tab", label: "New tab", key: "new_tab", run: newTab, when: () => !!root(), needs: OPEN_FOLDER },
     { id: "close_tab", label: "Close tab", key: "close_tab", run: () => { const t = frontTab(); if (t) void closeTab(t.id); }, when: () => !!frontTab(), needs: "an open tab" },
     { id: "split_right", label: "Split editor right", key: "split_right", run: () => { const t = frontTab(); if (t) void splitTab(t.id, "right"); }, when: () => !!frontTab(), needs: "an open tab" },
     { id: "show_in_pdf", label: "Show in PDF", key: "show_in_pdf", run: () => showInPdf(), when: texFile, needs: TEX },

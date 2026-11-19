@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Layout, SavedLayout, activeTab, deserialize, emptyLayout, findSpec, forget, keepTab, openPreview, others, place, remembered, removeTab, renamePaths, retarget, reveal, serialize, split, travel } from "../src/app/layout";
+import { Layout, SavedLayout, activeTab, addTab, deserialize, emptyLayout, findSpec, forget, keepTab, openPreview, others, place, remembered, removeTab, renamePaths, retarget, reveal, serialize, split, travel } from "../src/app/layout";
 
 const text = (path: string) => ({ kind: "text" as const, path });
 const names = (l: Layout) => l.groups.map((g) => g.tabs.map((t) => t.path + (t.id === g.active ? "*" : "")));
@@ -21,6 +21,18 @@ describe("editor groups", () => {
     l = reveal(l, text("a"), g).layout;
     l = place(l, text("b"), g).layout;
     expect(names(l)).toEqual([["a", "b*", "c"]]);
+  });
+
+  it("addTab opens a second tab for a page that's open already, keeping other tabs' histories", () => {
+    let l = emptyLayout();
+    const g = l.groups[0].id;
+    l = place(l, text("a"), g).layout;
+    l = place(l, text("b"), g).layout;
+    l = retarget(l, l.groups[0].active!, text("c"));
+    l = reveal(l, text("a"), g).layout;
+    l = addTab(l, text("a"), g).layout;
+    expect(names(l)).toEqual([["a", "a*", "c"]]);
+    expect(l.groups[0].tabs[2].back).toEqual([text("b")]);
   });
 
   it("reveal activates an open tab wherever it is instead of duplicating it", () => {

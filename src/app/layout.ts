@@ -105,6 +105,18 @@ export function place(layout: Layout, spec: TabSpec | Tab, groupId: string, inde
   return { layout: { ...next, activeGroup: groupId }, tab };
 }
 
+/** Opens `spec` in a new tab in `groupId` (after its active tab), even where it's open already, like a browser's new tab. */
+export function addTab(layout: Layout, spec: TabSpec, groupId: string): { layout: Layout; tab: Tab } {
+  const tab: Tab = { id: newId("t"), kind: spec.kind, path: spec.path };
+  if (!groupById(layout, groupId)) return { layout, tab };
+  const next = withGroup(layout, groupId, (g) => {
+    const tabs = [...g.tabs];
+    tabs.splice(g.active ? tabs.findIndex((t) => t.id === g.active) + 1 : tabs.length, 0, tab);
+    return { ...g, tabs, active: tab.id };
+  });
+  return { layout: { ...next, activeGroup: groupId }, tab };
+}
+
 /**
  * Opens `spec` as `groupId`'s preview tab: where it's already open it's just shown; otherwise
  * it takes the place of the group's current preview tab (or goes after the active tab).
