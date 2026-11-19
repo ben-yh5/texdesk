@@ -8,7 +8,7 @@ import { Host, join } from "../host/types";
 export type CommandId =
   | "find_file" | "find_in_files" | "command_palette" | "open_folder" | "open_file" | "toggle_sidebar" | "toggle_pdf"
   | "show_in_pdf" | "paste_as_code" | "paste_image" | "toggle_math_preview" | "follow_link" | "insert_link"
-  | "settings" | "close_tab" | "split_right" | "new_file" | "bracket_size" | "fix_spelling" | "jump_out" | "folder_overview" | "edit_diagram"
+  | "settings" | "new_tab" | "close_tab" | "split_right" | "new_file" | "bracket_size" | "fix_spelling" | "jump_out" | "folder_overview" | "edit_diagram"
   | "go_back" | "go_forward";
 
 export const DEFAULT_KEYS: Record<CommandId, string> = {
@@ -26,6 +26,7 @@ export const DEFAULT_KEYS: Record<CommandId, string> = {
   follow_link: "Mod-Alt-Enter",
   insert_link: "Mod-Shift-l",
   settings: "Mod-,",
+  new_tab: "Mod-t",
   close_tab: "Mod-w",
   new_file: "Mod-n",
   bracket_size: "Mod-Shift-e",
