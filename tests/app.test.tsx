@@ -2056,6 +2056,22 @@ describe("keeping up with the disk", () => {
     expect(built).toEqual([hw1]);
   });
 
+  it("other documents changed on disk rebuild in the background if they've been built before", async () => {
+    const hw2 = `${WS}/Fa30/1-CS101/hw/hw2.tex`;
+    const hw3 = `${WS}/Fa30/1-CS101/hw/hw3.tex`;
+    const b = await boot({ ...workspace, [hw2]: "\\documentclass{article}\nTwo", [`${WS}/Fa30/1-CS101/hw/.build/hw2.pdf`]: "%PDF", [hw3]: "\\documentclass{article}\nThree" }, hw1);
+    await waitFor(() => b.editor()?.state.doc.length);
+    const built = await countBuilds(b);
+    const status = b.root.querySelector(".buildstatus")!.className;
+    b.host.touch(hw2, "\\documentclass{article}\nTwo, changed elsewhere");
+    b.host.touch(hw3, "\\documentclass{article}\nThree, changed elsewhere"); // never built: left alone
+    await waitFor(() => built.length === 1);
+    await settle(500);
+    expect(built).toEqual([hw2]);
+    expect(b.root.querySelector(".buildstatus")!.className).toBe(status); // the status bar still shows hw1's build
+    expect(b.editor().state.doc.toString()).not.toContain("Two");
+  });
+
   it("the tab bar's Save PDF button saves a linked copy and shows it under the .tex", async () => {
     const hw2 = `${WS}/Fa30/1-CS101/hw/hw2.tex`;
     const built = `${WS}/Fa30/1-CS101/hw/.build/hw2.pdf`;

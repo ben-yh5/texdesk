@@ -721,7 +721,7 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     for (const p of paths) texCache.delete(p);
     for (const p of paths) {
       if (shownIn(p)) void reloadFromDisk(p);
-      else if (p === builder.lastRoot) void rebuildIfChanged(p);
+      else if (TEX_EXT.has(extname(p))) void rebuildIfChanged(p);
     }
     clearTimeout(treeTimer);
     treeTimer = setTimeout(() => void refreshFiles(), 150);
@@ -752,16 +752,25 @@ export function App(props: { host: Host; viewerFactory?: ViewerFactory }) {
     } finally { reloading = false; }
     if (path() === p) { setDirty(false); updateTitle(); }
     say(`${basename(p)} changed on disk — reloaded`);
-    if (TEX_EXT.has(extname(p)) && (path() === p || p === builder.lastRoot)) builder.schedule(p, config().build.debounceMs);
+    void rebuildChanged(p, text);
   }
 
-  /** The last-built document changed on disk while not on screen: rebuild it, unless that was TeXdesk's own save. */
+  /** A .tex file not on screen changed on disk: rebuild it, unless that was TeXdesk's own save. */
   async function rebuildIfChanged(p: string) {
     let text: string;
     try { text = await host.readText(p); } catch { return; }
     if (onDisk.get(p) === text) return;
-    onDisk.set(p, text);
-    builder.schedule(p, config().build.debounceMs);
+    if (onDisk.has(p)) onDisk.set(p, text);
+    await rebuildChanged(p, text);
+  }
+
+  /** Rebuilds a file changed outside TeXdesk: the open or last-built document as usual, any other document that has a PDF in the background. */
+  async function rebuildChanged(p: string, text: string) {
+    if (!TEX_EXT.has(extname(p))) return;
+    const delay = config().build.debounceMs;
+    if (path() === p || p === builder.lastRoot) builder.schedule(p, delay);
+    else if (extname(p) === "tex" && /^[^%\n]*\\documentclass/m.test(text)
+      && await host.exists(join(dirname(p), ".build", basename(p).replace(/\.tex$/, ".pdf")))) builder.scheduleAside(p, delay);
   }
 
   /** The current file changed on disk while you have unsaved edits: reload it, or keep yours (saving then replaces it). */
