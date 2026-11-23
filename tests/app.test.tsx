@@ -2589,6 +2589,23 @@ describe("opening overviews from the file tree", () => {
     expect(b.root.querySelector(".tb-overview")).toBeTruthy();
   });
 
+  it("⌘T opens a new tab with the workspace's home overview, even when one is open already", async () => {
+    const b = await boot(coursework, hw1);
+    await waitFor(() => b.editor()?.state.doc.length);
+    b.key("t", { metaKey: true });
+    await waitFor(() => shown(b.root)?.querySelector(".ov-h1")?.textContent === "School");
+    expect(overviewTabs(b.root)).toEqual(["School"]);
+    expect([...b.root.querySelectorAll(".tab .tab-name")].map((t) => t.textContent)).toContain("hw1.tex");
+    b.key("t", { metaKey: true });
+    await waitFor(() => overviewTabs(b.root).length === 2);
+    expect(overviewTabs(b.root)).toEqual(["School", "School"]);
+    await waitFor(() => shown(b.root)?.querySelector(".ov-h1")?.textContent === "School");
+    // Closing one leaves the other.
+    b.key("w", { metaKey: true });
+    await waitFor(() => overviewTabs(b.root).length === 1);
+    await waitFor(() => shown(b.root)?.querySelector(".ov-h1")?.textContent === "School");
+  });
+
   it("the tree works from the keyboard: ↑↓ move, → / ← open and close, ⌘↓ opens", async () => {
     const b = await boot(coursework, hw1);
     await waitFor(() => b.editor()?.state.doc.length);
